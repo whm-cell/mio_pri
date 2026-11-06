@@ -4,9 +4,9 @@
 
 ## 团队任务协调
 
-- 每位成员在自己的 checkout/worktree 维护独立、忽略的 `.work/`。新任务先 `pnpm work guide start`；已有任务先 `pnpm work context <task> resume`。后续只展开当前动作 implement、verify、handoff 或 archive，不默认通读操作手册、记录历史或验收日志。
-- 当前执行者读取目标、相关章节和当前摘要，核对真实差异后选择下一项已授权动作；事实变化更新同一记录。公共需求与跨人交接保存在团队可访问的来源。动作索引见 [协调协议](docs/coordination.md)，只有操作或字段确有缺口才展开对应 [命令章节](docs/work-records.md)。
-- 执行前运行 `pnpm work check <task>`；发现契约、文档、代码或分支变化，先核对影响，再以 `pnpm work sync <task> "核对理由"` 更新检查点。单任务只设一个写入者；并行任务使用独立记录，代码写入冲突时隔离工作区。
+- 用户用自然语言给出目标、决定和反馈；当前 Agent 负责从公共 PRD／相关规格拆解当前子任务，并自动维护每位成员自己 checkout/worktree 中忽略的 `.work/`，不要求用户执行命令、命名目录或编辑记录。此职责不依赖个人 Skills。
+- Agent 新任务先取 `pnpm work guide start`，用结构化 `ensure --stdin` 自动初始化／复用记录；中断后先用 `status` 找到原子任务，再取 `context <task> resume`。事实变化时用带 revision 的 `update --stdin` 更新同一记录。后续只展开当前动作，不默认通读操作手册、历史或日志；入口见 [协调协议](docs/coordination.md)。
+- Agent 执行前用 `work check` 核对现场；契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。公共需求与跨人交接放团队可访问的来源。单任务只设一个写入者；代码写入冲突时隔离工作区。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。
 
 ## 工程边界

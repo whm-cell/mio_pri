@@ -13,7 +13,14 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
   if (scan.errors.length) throw new Error(scan.errors.join('\n'));
   const selected = new Set<string>();
   for (const [kind, paths] of [
-    ['source', [...requiredSources, ...task.plan.sources]],
+    [
+      'source',
+      [
+        ...requiredSources,
+        ...task.plan.sources,
+        ...(task.plan.requirement ? [task.plan.requirement.source] : []),
+      ],
+    ],
     ['input', task.plan.inputs],
     ['scope', task.plan.scope],
   ] as const) {
@@ -47,6 +54,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     decisions: plan.decisions,
     dependencies: plan.dependencies,
     stopCondition: plan.stopCondition,
+    ...(plan.requirement ? { requirement: plan.requirement } : {}),
   };
   const contract = digest(json(contractPlan));
   const git = (args: string[]) => {

@@ -1,5 +1,15 @@
-import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -34,12 +44,13 @@ async function fixture(actor = 'alice') {
 }
 
 // The child has no Skill paths, Codex tools or conversation history; all behavior enters the real CLI.
-function invoke(root: string, args: string[]) {
+function invoke(root: string, args: string[], input?: unknown) {
   const result = spawnSync(process.execPath, [cli, ...args], {
     cwd: root,
     encoding: 'utf8',
     env: { PATH: process.env.PATH ?? '' },
     timeout: 10000,
+    ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   return { status: result.status, output: `${result.stdout}\n${result.stderr}`.trim() };
 }
@@ -55,19 +66,19 @@ async function edit(root: string, change: (task: Task) => void, id = 'probe') {
 
 async function ready(root: string, id = 'probe') {
   expect(invoke(root, ['start', id, 'Verify the probe', 'docs/api.md']).status).toBe(0);
-  await edit(
-    root,
-    (task) => {
-      task.plan.scope = ['src'];
-      task.plan.authorization = 'Fixture user requests local probe implementation and checks.';
-      task.plan.acceptance = [
-        { id: 'checks', criterion: 'The probe check passes.', method: 'automated' },
-      ];
-      task.plan.nextAction = 'Implement and check the probe.';
-      task.plan.stopCondition = 'Return verified results for review.';
+  const revision = JSON.parse(invoke(root, ['context', id, 'resume']).output).revision;
+  const updated = invoke(root, ['update', id, '--stdin'], {
+    revision,
+    reason: 'Derived the probe contract from the fixture user request.',
+    plan: {
+      scope: ['src'],
+      authorization: 'Fixture user requests local probe implementation and checks.',
+      acceptance: [{ id: 'checks', criterion: 'The probe check passes.', method: 'automated' }],
+      nextAction: 'Implement and check the probe.',
+      stopCondition: 'Return verified results for review.',
     },
-    id,
-  );
+  });
+  expect(updated.status, updated.output).toBe(0);
   const result = invoke(root, ['sync', id, 'Read the contract and inspected the baseline.']);
   expect(result.status, result.output).toBe(0);
 }
@@ -95,6 +106,240 @@ it('initializes without Skills, retains existing records and refuses another mem
   expect(invoke(root, ['start', 'probe', 'Replacement']).status).toBe(1);
   expect(await readFile(statePath(root), 'utf8')).toBe(original);
   expect(await readFile(join(root, '.work/evidence/legacy.log'), 'utf8')).toBe('original failure');
+});
+
+const requirement = { source: 'docs/api.md', section: 'API', key: 'value-probe' };
+function proposal() {
+  return {
+    requirement,
+    plan: {
+      goal: 'Implement the PRD value subtask.',
+      scope: ['src'],
+      authorization: 'Fixture user requests this PRD subtask and local validation.',
+      acceptance: [{ id: 'checks', criterion: 'The value is 2.', method: 'automated' }],
+      nonGoals: ['No remote operations.'],
+      nextAction: 'Implement the value subtask.',
+      stopCondition: 'Return results for human review.',
+    },
+  };
+}
+
+it('bootstraps one complete member record when independent subtasks start concurrently', async () => {
+  const root = await fixture();
+  await rm(join(root, '.work'), { recursive: true });
+  const pending = Array.from({ length: 12 }, (_, index) => {
+    const child = spawn(process.execPath, [cli, 'ensure', '--stdin'], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? '' },
+      timeout: 10000,
+    });
+    let output = '';
+    child.stdout.on('data', (bytes: Buffer) => (output += bytes.toString()));
+    child.stderr.on('data', (bytes: Buffer) => (output += bytes.toString()));
+    const result = new Promise<{ status: number | null; output: string }>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (status) => resolve({ status, output }));
+    });
+    return { child, result, key: `parallel-${index}` };
+  });
+  for (const { child, key } of pending)
+    child.stdin.end(JSON.stringify({ ...proposal(), requirement: { ...requirement, key } }));
+  const results = await Promise.all(pending.map(({ result }) => result));
+  for (const result of results) expect(result.status, result.output).toBe(0);
+  const member = JSON.parse(await readFile(join(root, '.work/member.json'), 'utf8'));
+  expect(member.workspace).toBe(await realpath(root));
+  expect(await readdir(join(root, '.work'))).toEqual(['member.json', 'tasks']);
+  expect(await readdir(join(root, '.work/tasks'))).toHaveLength(12);
+  for (const result of results) {
+    const id = JSON.parse(result.output).task.id as string;
+    expect((await state(root, id)).member).toBe(member.member);
+  }
+});
+
+it('automatically creates a PRD subtask and resumes it after interruption without replacing progress or evidence', async () => {
+  const root = await fixture();
+  await rm(join(root, '.work'), { recursive: true });
+  expect(JSON.parse(invoke(root, ['status']).output)).toEqual({ tasks: [] });
+  await expect(readdir(join(root, '.work'))).rejects.toHaveProperty('code', 'ENOENT');
+  const first = invoke(root, ['ensure', '--stdin'], proposal());
+  expect(first.status, first.output).toBe(0);
+  const created = JSON.parse(first.output);
+  const id = created.task.id as string;
+  expect(created.created).toBe(true);
+  expect(created.assessment.ready).toBe(true);
+  expect(created.task.requirement).toEqual(requirement);
+  expect(JSON.parse(invoke(root, ['status']).output).tasks[0].requirement).toEqual(requirement);
+  expect((await state(root, id)).member).toMatch(/^local-/);
+  expect(invoke(root, ['ensure', '--stdin'], proposal()).output).toContain('"created": false');
+  const implementing = invoke(root, ['update', id, '--stdin'], {
+    revision: created.revision,
+    reason: 'Started the authorized PRD subtask.',
+    stage: 'C1_IMPLEMENTATION',
+  });
+  expect(implementing.status, implementing.output).toBe(0);
+  const script =
+    'require("node:assert/strict").equal(require("node:fs").readFileSync("src/value.ts", "utf8"), "export const value = 2;\\n")';
+  expect(run(root, script, id).status).toBe(1);
+  const beforePause = JSON.parse(invoke(root, ['context', id, 'resume']).output);
+  expect(
+    invoke(root, ['update', id, '--stdin'], {
+      revision: beforePause.revision,
+      reason: 'Interrupted after observing the original failing value.',
+      plan: { nextAction: 'Change value to 2, then rerun the same criterion.' },
+    }).status,
+  ).toBe(0);
+  const saved = await readFile(statePath(root, id), 'utf8');
+  const resumed = invoke(root, ['ensure', '--stdin'], { requirement });
+  expect(resumed.status, resumed.output).toBe(0);
+  const continuation = JSON.parse(resumed.output);
+  expect(continuation.task.id).toBe(id);
+  expect(continuation.task.nextAction).toContain('Change value to 2');
+  expect(continuation.revision).not.toBe(beforePause.revision);
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(saved);
+  expect(invoke(root, ['ensure', '--stdin'], proposal()).output).toContain('WORK_CONFLICT');
+  await writeFile(join(root, 'src/value.ts'), 'export const value = 2;\n');
+  const stale = JSON.parse(invoke(root, ['ensure', '--stdin'], { requirement }).output);
+  expect(stale.assessment.ready).toBe(false);
+  expect(stale.assessment.errors.join()).toContain('WORK_CONTEXT_CHANGED');
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(saved);
+  expect(
+    invoke(root, ['sync', id, 'Reviewed the value change against the PRD subtask.']).status,
+  ).toBe(0);
+  expect(run(root, script, id).status).toBe(0);
+  const final = await state(root, id);
+  expect(final.evidence.map((entry) => entry.result)).toEqual(['fail', 'pass']);
+  expect(final.reviewDecision).toBe('PENDING');
+  expect(final.evidence[0]!.candidate).not.toBe(final.evidence[1]!.candidate);
+  expect(await readdir(join(root, '.work/tasks'))).toEqual([id]);
+  expect(
+    invoke(root, ['ensure', '--stdin'], {
+      requirement: { ...requirement, key: 'unknown-subtask' },
+    }).output,
+  ).toContain('new tasks require plan.goal');
+  expect(await readdir(join(root, '.work/tasks'))).toEqual([id]);
+});
+
+it('rejects stale structured updates, protected fields and invalid contracts without altering the original record', async () => {
+  const root = await fixture();
+  await ready(root);
+  const context = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  const request = { revision: context.revision, reason: 'Update the verified next action.' };
+  expect(
+    invoke(root, ['update', 'probe', '--stdin'], { ...request, plan: { nextAction: 'Next.' } })
+      .status,
+  ).toBe(0);
+  const saved = await readFile(statePath(root), 'utf8');
+  expect(invoke(root, ['update', 'probe', '--stdin'], request).output).toContain('WORK_CONFLICT');
+  const revision = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output).revision;
+  for (const patch of [
+    { evidence: [] },
+    { member: 'bob' },
+    { checkpoint: null },
+    { reviewDecision: 'ACCEPT' },
+    { releaseDisposition: 'RELEASED' },
+    { stage: 'C1_RELEASED' },
+    { plan: { id: 'new-id' } },
+    { plan: { requirement } },
+    { plan: null },
+    { plan: { acceptance: [{ id: 'bad', criterion: 'Bad', method: 'unknown' }] } },
+  ]) {
+    expect(
+      invoke(root, ['update', 'probe', '--stdin'], { ...request, revision, ...patch }).status,
+    ).toBe(1);
+    expect(await readFile(statePath(root), 'utf8')).toBe(saved);
+  }
+});
+
+it('invalidates release on structured contract changes while preserving old evidence and requiring sync', async () => {
+  const root = await fixture();
+  await ready(root);
+  expect(run(root).status).toBe(0);
+  await accept(root);
+  const original = await state(root);
+  const current = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  const progress = JSON.parse(
+    invoke(root, ['update', 'probe', '--stdin'], {
+      revision: current.revision,
+      reason: 'Only the next action changed.',
+      plan: { nextAction: 'Wait for the next user instruction.' },
+    }).output,
+  );
+  expect(progress.assessment.ready).toBe(true);
+  expect((await state(root)).releaseDisposition).toBe('RELEASED');
+  const changed = invoke(root, ['update', 'probe', '--stdin'], {
+    revision: progress.revision,
+    reason: 'User changed the required criterion.',
+    plan: {
+      acceptance: [{ id: 'checks', criterion: 'A new required result.', method: 'automated' }],
+    },
+  });
+  expect(changed.status, changed.output).toBe(0);
+  const task = await state(root);
+  expect(task.stage).toBe('C1_EVIDENCE_PENDING');
+  expect(task.reviewDecision).toBe('PENDING');
+  expect(task.evidence).toEqual(original.evidence);
+  expect(task.checkpoint).toEqual(original.checkpoint);
+  expect(JSON.parse(changed.output).assessment.errors.join()).toContain('WORK_CONTEXT_CHANGED');
+  expect(invoke(root, ['sync', 'probe', 'Reconciled the new acceptance target.']).status).toBe(0);
+  expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe('pending');
+});
+
+it('keeps PRD source binding and requires explicit current authorization to reopen archived work', async () => {
+  const root = await fixture();
+  const result = JSON.parse(invoke(root, ['ensure', '--stdin'], proposal()).output);
+  const id = result.task.id as string;
+  expect((await state(root, id)).checkpoint!.files).toHaveProperty('docs/api.md');
+  expect(invoke(root, ['archive', id, 'Paused by user.']).status).toBe(0);
+  const archived = JSON.parse(invoke(root, ['ensure', '--stdin'], { requirement }).output);
+  expect(archived.task.archived).toBe(true);
+  const request = {
+    revision: archived.revision,
+    reason: 'User requests this subtask again.',
+    reopen: true,
+  };
+  expect(invoke(root, ['update', id, '--stdin'], request).output).toContain('reopening requires');
+  expect(
+    invoke(root, ['update', id, '--stdin'], {
+      ...request,
+      plan: { authorization: 'Current user explicitly requests resuming this subtask.' },
+    }).status,
+  ).toBe(0);
+  expect((await state(root, id)).archived).toBe(false);
+  expect(invoke(root, ['check', id]).output).toContain('WORK_CONTEXT_CHANGED');
+  expect(invoke(root, ['sync', id, 'Reconciled the new authorization.']).status).toBe(0);
+  await writeFile(join(root, 'docs/api.md'), '# API\nUpdated PRD contract.\n');
+  expect(invoke(root, ['check', id]).output).toContain('WORK_CONTEXT_CHANGED');
+  const original = await readFile(statePath(root, id), 'utf8');
+  expect(
+    invoke(root, ['ensure', '--stdin'], { requirement: { ...requirement, section: 'Other' } })
+      .output,
+  ).toContain('WORK_CONFLICT');
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(original);
+  expect(
+    invoke(root, ['ensure', '--stdin'], {
+      ...proposal(),
+      requirement: { ...requirement, source: '.work/private.md' },
+    }).output,
+  ).toContain('WORK_PRIVATE');
+});
+
+it('preserves requirement identity across handoff while clearing recipient authority and evidence', async () => {
+  const sender = await fixture();
+  const first = JSON.parse(invoke(sender, ['ensure', '--stdin'], proposal()).output);
+  const id = first.task.id as string;
+  const portable = invoke(sender, ['handoff', id]);
+  expect(portable.status, portable.output).toBe(0);
+  const receiver = await fixture('bob');
+  await mkdir(join(receiver, '.work/inbox'));
+  await cp(portable.output, join(receiver, '.work/inbox/task.md'));
+  expect(invoke(receiver, ['receive', '.work/inbox/task.md']).status).toBe(0);
+  const resumed = JSON.parse(invoke(receiver, ['ensure', '--stdin'], { requirement }).output);
+  expect(resumed.created).toBe(false);
+  expect(resumed.task.id).toBe(id);
+  expect(resumed.task.requirement).toEqual(requirement);
+  expect(resumed.task.authorization).toBe('');
+  expect(resumed.assessment.ready).toBe(false);
+  expect((await state(receiver, id)).evidence).toEqual([]);
 });
 
 it('offers start guidance without personal records and returns only the selected action', async () => {

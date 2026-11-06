@@ -1,11 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 
 export const stages = ['C0_READY', 'C1_IMPLEMENTATION', 'C1_EVIDENCE_PENDING', 'C1_RELEASED'];
 export const methods = ['automated', 'review', 'behavior'];
+export interface Requirement {
+  source: string;
+  section: string;
+  key: string;
+}
 export interface TaskPlan {
   id: string;
+  requirement?: Requirement;
   goal: string;
   scope: string[];
   inputs: string[];
@@ -101,6 +107,14 @@ export function parseTask(raw: string): Task {
     if (typeof plan[key] !== 'string') throw new Error(`WORK_SCHEMA: plan.${key}`);
   }
   identifier(plan.id as string);
+  if (plan.requirement !== undefined) {
+    const requirement = object(plan.requirement);
+    for (const key of ['source', 'section', 'key']) {
+      if (typeof requirement[key] !== 'string' || !(requirement[key] as string).trim())
+        throw new Error(`WORK_SCHEMA: requirement.${key}`);
+    }
+    identifier(requirement.key as string);
+  }
   for (const key of ['scope', 'inputs', 'sources', 'nonGoals', 'blockers']) {
     if (!strings(plan[key])) throw new Error(`WORK_SCHEMA: plan.${key}`);
   }
@@ -189,6 +203,39 @@ export async function member(root: string): Promise<string> {
       'WORK_MEMBER: initialize this workspace; receive a handoff instead of copying another member directory',
     );
   return identifier(value.member);
+}
+
+/** A member is a local label, not an identity or permission credential. */
+export async function initializeMember(root: string, actor?: string): Promise<string> {
+  const path = await checkedPath(root, '.work/member.json');
+  try {
+    const current = await member(root);
+    if (actor !== undefined && current !== identifier(actor))
+      throw new Error('WORK_MEMBER: this workspace belongs to another member');
+    return current;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  const selected = actor === undefined ? `local-${digest(root).slice(0, 16)}` : identifier(actor);
+  await mkdir(dirname(path), { recursive: true });
+  // Different tasks may bootstrap together. Publish complete bytes exclusively, never a partial member file.
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, json({ version: 1, member: selected, workspace: root }), {
+      flag: 'wx',
+    });
+    try {
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    const current = await member(root);
+    if (actor !== undefined && current !== actor)
+      throw new Error('WORK_MEMBER: this workspace belongs to another member');
+    return current;
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }
 
 export function draft(root: string, actor: string, id: string, goal: string): Task {

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   addEvidence,
@@ -13,11 +13,12 @@ import {
 } from './context.ts';
 import { handoff, receive } from './handoff.ts';
 import { guide, taskSummary } from './guide.ts';
+import { ensureTask, inspectTask, updateTask } from './manage.ts';
 import {
   checkedPath,
   digest,
   draft,
-  identifier,
+  initializeMember,
   json,
   loadTask,
   member,
@@ -27,8 +28,11 @@ import {
 const root = await realpath('.');
 const [command, ...args] = process.argv.slice(2);
 const help = `Usage: pnpm work <command>
+Agent operates this CLI; the user supplies goals and decisions.
+  ensure --stdin                       create/reuse a PRD subtask from structured JSON
+  update <task> --stdin                 update plan/progress with an expected revision
   init <member>                         initialize this member's workspace
-  start <task> <goal> [source.md ...]    create a draft; edit its contract before sync
+  start <task> <goal> [source.md ...]    legacy draft; complete via update before sync
   status                                list local tasks
   guide <action>                        read common rules and one action, without local records
   context <task> <action>               read current task summary, checks and one action
@@ -40,7 +44,14 @@ const help = `Usage: pnpm work <command>
   receive <shared.md>                   verify candidate, create this member's draft
   archive <task> <reason>               mark history; retain all files
 Actions: start, resume, implement, verify, handoff, archive
-Start: pnpm work guide start; expand only the current action.`;
+Agent entry: guide start, then ensure --stdin; expand only the current action.`;
+
+async function input() {
+  if (process.stdin.isTTY) throw new Error('WORK_REQUEST: pipe a JSON request on stdin');
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 async function main() {
   if (!command || command === 'help') return console.log(help);
@@ -52,17 +63,41 @@ async function main() {
   }
   if (command === 'init') {
     if (args.length !== 1) throw new Error(help);
-    const actor = identifier(args[0]!);
-    const path = await checkedPath(root, '.work/member.json');
-    await mkdir(dirname(path), { recursive: true });
-    try {
-      await writeFile(path, json({ version: 1, member: actor, workspace: root }), { flag: 'wx' });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    if ((await member(root)) !== actor)
-      throw new Error('WORK_MEMBER: this workspace belongs to another member');
+    const actor = await initializeMember(root, args[0]!);
     return console.log(`Initialized ${actor}; existing records and evidence retained.`);
+  }
+  if (command === 'ensure') {
+    if (args.length !== 1 || args[0] !== '--stdin') throw new Error(help);
+    return console.log(json(await ensureTask(root, await input())));
+  }
+  if (command === 'update') {
+    if (args.length !== 2 || args[1] !== '--stdin') throw new Error(help);
+    return console.log(json(await updateTask(root, args[0]!, await input())));
+  }
+  if (command === 'status') {
+    if (args.length) throw new Error(help);
+    const directory = await checkedPath(root, '.work/tasks');
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      return console.log(json({ tasks: [] }));
+    }
+    const tasks = [];
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const { task } = await loadTask(root, entry.name);
+      tasks.push({
+        id: task.plan.id,
+        goal: task.plan.goal,
+        requirement: task.plan.requirement,
+        stage: task.stage,
+        archived: task.archived,
+        nextAction: task.plan.nextAction,
+      });
+    }
+    return console.log(json({ tasks }));
   }
   const actor = await member(root);
   if (command === 'start') {
@@ -73,25 +108,6 @@ async function main() {
     return console.log(
       `Draft: .work/tasks/${task.plan.id}/state.json; complete the contract before sync.`,
     );
-  }
-  if (command === 'status') {
-    if (args.length) throw new Error(help);
-    const directory = await checkedPath(root, '.work/tasks');
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      return console.log('No local tasks.');
-    }
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      const { task } = await loadTask(root, entry.name);
-      console.log(
-        `${task.plan.id}: ${task.archived ? 'archived' : (task.stage ?? 'contract pending')}; ${task.plan.nextAction}`,
-      );
-    }
-    return;
   }
   if (command === 'receive') {
     if (args.length !== 1) throw new Error(help);
@@ -104,16 +120,8 @@ async function main() {
   if (command === 'context') {
     if (args.length !== 2) throw new Error(help);
     const reading = await guide(root, args[1]!);
-    let assessment;
-    try {
-      assessment = await assess(root, task);
-    } catch (error) {
-      assessment = {
-        ready: false,
-        errors: [error instanceof Error ? error.message : String(error)],
-      };
-    }
-    return console.log(json({ task: taskSummary(task, args[1]!), assessment, ...reading }));
+    const inspected = await inspectTask(root, task, raw);
+    return console.log(json({ ...inspected, task: taskSummary(task, args[1]!), ...reading }));
   }
   if (command === 'check') {
     if (args.length !== 1) throw new Error(help);

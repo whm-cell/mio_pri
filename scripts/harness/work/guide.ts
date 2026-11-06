@@ -69,6 +69,7 @@ export async function guide(root: string, action: string) {
 export function taskSummary(task: Task, action: string) {
   return {
     id: task.plan.id,
+    ...(task.plan.requirement ? { requirement: task.plan.requirement } : {}),
     goal: task.plan.goal,
     stage: task.stage,
     reviewDecision: task.reviewDecision,

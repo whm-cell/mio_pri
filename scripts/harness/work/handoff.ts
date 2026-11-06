@@ -29,6 +29,7 @@ export async function handoff(root: string, task: Task) {
     checkpoint: task.checkpoint,
     plan: {
       id: plan.id,
+      ...(plan.requirement ? { requirement: plan.requirement } : {}),
       goal: plan.goal,
       scope: plan.scope,
       inputs: plan.inputs,

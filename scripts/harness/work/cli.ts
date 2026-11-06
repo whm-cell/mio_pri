@@ -15,6 +15,7 @@ import { handoff, receive } from './handoff.ts';
 import { guide, taskSummary } from './guide.ts';
 import { ensureTask, inspectTask, updateTask } from './manage.ts';
 import { deliver } from './delivery.ts';
+import { qualityCriterion, qualityReviewResult } from './quality-review.ts';
 import {
   checkedPath,
   digest,
@@ -189,6 +190,11 @@ async function main() {
         'WORK_EVIDENCE: automated checks use work run; other evidence needs result, artifact and summary',
       );
     const bytes = await artifact(root, task.plan.id, args[3]!);
+    if (
+      criterion.id === qualityCriterion.id &&
+      qualityReviewResult(bytes.toString('utf8'), state.candidate) !== args[2]
+    )
+      throw new Error('WORK_QUALITY_EVIDENCE: declared result disagrees with review dimensions');
     addEvidence(task, {
       criterion: criterion.id,
       method: criterion.method,

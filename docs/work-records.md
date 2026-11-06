@@ -48,6 +48,8 @@ plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance
 
 首次 ensure 保存初始检查点，完整且无阻塞的契约进入 C0_READY；不完整的记录保持草稿。ensure 退出成功表示已创建或读取记录，能否执行仍看 assessment.ready。Agent 确认授权和依赖后用 update 标记实施，不会为每轮会话另建记录。原有 v1 任务和 `.work/evidence` 不迁移、不删除；新 clone 从仓库内生成器落地本人目录。
 
+源码范围的 ensure／update 会补入 `quality-review`，保留已有同名 criterion 文本但要求 method 为 review。自动登记后的契约参与候选摘要；ensure 重试不重复添加，读取旧记录不会改写其契约。`assessment.qualityReview` 返回是否需要及当前原件状态；ready 只表示可继续执行，pending 审查仍阻止生成交付草稿。
+
 ## 核对与同步
 
 ```sh
@@ -89,6 +91,34 @@ pnpm work evidence api-probe review pass .work/tasks/api-probe/evidence/review.m
 checks 或 review 必须是本任务 acceptance ID。run 只用于 automated，按 argv 启动不经 Shell，不解释管道或重定向，且必须在授权内。每次保存新的原件、退出码、候选和 Node／平台环境，失败、信号退出或可观察的输入变化不记录通过。它会比较前后字节及已有文件／源目录的身份和变更时间；不是沙箱或完整中间行为证明。
 
 evidence 只用于 review／behavior，登记本任务 evidence 目录的真实原件或已取回的共享 Markdown。原件需写实际操作者、场景、输入／环境、动作、结果和限制；记录器只绑定哈希和本机环境，不认证独立性或业务真实性。
+
+`quality-review` 原件在普通 Markdown 中附一个 `mio-quality-review` 代码块。下面是未执行的模板，须由实际审查替换，不能原样填 pass：
+
+````md
+# 代码质量审查
+
+记录实际基线／diff、调用链、问题位置、影响、已检查的反证与最小建议。
+
+```mio-quality-review
+{
+  "candidate": "替换为 context 返回的当前候选摘要",
+  "reviewer": "实际审查者及其是否参与实现",
+  "scope": ["实际审查路径和相关调用关系"],
+  "dimensions": {
+    "algorithm": { "result": "pending", "evidence": "尚未核对输入规模、调用频率和资源成本" },
+    "unused": { "result": "pending", "evidence": "尚未核对导出、注册、外部与测试消费者" },
+    "reuse": { "result": "pending", "evidence": "尚未比较已有实现的行为与边界" }
+  },
+  "limitations": "尚未执行审查"
+}
+```
+````
+
+每维 result 为 pass／fail／pending／not_applicable，evidence 必须说明观察或不适用理由。整体结果由三个维度推导，须与 evidence 命令参数相同；候选不匹配、缺维度、空依据和仅有“通过”文本拒绝登记。交付时再次核对原件；原件格式完整不证明语义正确，审查者仍须执行验证协议。
+
+```sh
+pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/evidence/quality-review.md "实际审查进度与限制"
+```
 
 当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。收到针对候选的真实人类接受后通过下述 deliver complete 设置接受与释放，再 check；自动通过不代替这一接受。
 

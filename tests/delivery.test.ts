@@ -26,6 +26,7 @@ import {
 } from '../scripts/harness/work/records.ts';
 import { checkDocuments } from '../scripts/harness/check-documents.ts';
 import { inventory, loadConfig } from '../scripts/harness/inventory.ts';
+import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 
 const project = resolve('.');
 const scratch: string[] = [];
@@ -62,7 +63,10 @@ async function setup(root: string, id = 'probe') {
     scope: ['src', 'docs'],
     sources: ['docs/api.md'],
     authorization: 'Fixture user authorized implementation.',
-    acceptance: [{ id: 'checks', criterion: 'Capability returns 1.', method: 'automated' }],
+    acceptance: [
+      { id: 'checks', criterion: 'Capability returns 1.', method: 'automated' },
+      { id: 'quality-review', criterion: 'Review the fixture source.', method: 'review' },
+    ],
     nextAction: 'Verify',
     stopCondition: 'Return for acceptance',
   });
@@ -89,6 +93,19 @@ async function passing(root: string, id = 'probe') {
     summary: 'Fixture observation',
     environment: 'isolated fixture',
   });
+  const review = reviewMarkdown(reviewFixture(task.checkpoint.candidate));
+  const reviewPath = `.work/tasks/${id}/evidence/review-${task.evidence.length}.md`;
+  await writeFile(join(root, reviewPath), review);
+  task.evidence.push({
+    criterion: 'quality-review',
+    method: 'review',
+    result: 'pass',
+    candidate: task.checkpoint.candidate,
+    artifact: reviewPath,
+    sha256: digest(review),
+    summary: 'Fixture quality review',
+    environment: 'isolated fixture',
+  });
   task.stage = 'C1_EVIDENCE_PENDING';
   task.reviewDecision = 'PENDING';
   task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
@@ -107,7 +124,10 @@ async function prepare(root: string, id = 'probe') {
       outcomes: 'Returns the requested capability.',
       decisions: 'Use the existing API.',
       limitations: 'Fixture only.',
-      evidence: [{ criterion: 'checks', representation: 'original' }],
+      evidence: [
+        { criterion: 'checks', representation: 'original' },
+        { criterion: 'quality-review', representation: 'original' },
+      ],
     }),
   );
 }
@@ -274,7 +294,7 @@ it('receives accepted history with changed code as a new local draft without aut
   await expect(receive(receiver, reportPath('probe'))).rejects.toThrow();
 });
 
-it.each([0, 1, 2, 3, 4])(
+it.each([0, 1, 2, 3, 4, 5])(
   'recovers a delivery interrupted after %i target writes without duplicate output',
   async (cut) => {
     const root = await fixture();

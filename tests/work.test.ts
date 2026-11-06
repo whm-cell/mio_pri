@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { Task } from '../scripts/harness/work/records.ts';
+import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 
 const project = resolve('.');
 const cli = join(project, 'scripts/harness/work/cli.ts');
@@ -88,6 +89,17 @@ function run(root: string, script = 'console.log("observed probe")', id = 'probe
 }
 
 async function accept(root: string) {
+  const current = await state(root);
+  const relative = `.work/tasks/probe/evidence/review-${current.evidence.length}.md`;
+  await mkdir(dirname(join(root, relative)), { recursive: true });
+  await writeFile(
+    join(root, relative),
+    reviewMarkdown(reviewFixture(current.checkpoint!.candidate)),
+  );
+  expect(
+    invoke(root, ['evidence', 'probe', 'quality-review', 'pass', relative, 'Fixture review.'])
+      .status,
+  ).toBe(0);
   await edit(root, (task) => {
     task.stage = 'C1_RELEASED';
     task.reviewDecision = 'ACCEPT';
@@ -510,7 +522,7 @@ it('detects changed child documents read-only, rejects execution, and retains st
     0,
   );
   const task = await state(root);
-  expect(task.evidence).toHaveLength(1);
+  expect(task.evidence).toHaveLength(2);
   expect(task.stage).toBe('C1_EVIDENCE_PENDING');
   expect(task.reviewDecision).toBe('PENDING');
   expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe('pending');
@@ -569,7 +581,7 @@ it('can refresh missing release evidence without manually bypassing release chec
   expect(invoke(root, ['check', 'probe']).output).toContain('WORK_RELEASE');
   expect(run(root).status).toBe(0);
   const refreshed = await state(root);
-  expect(refreshed.evidence).toHaveLength(2);
+  expect(refreshed.evidence).toHaveLength(3);
   expect(refreshed.stage).toBe('C1_EVIDENCE_PENDING');
   expect(refreshed.reviewDecision).toBe('PENDING');
   expect(invoke(root, ['check', 'probe']).status).toBe(0);
@@ -671,6 +683,7 @@ it('checks retrieved manual evidence and refuses release after its artifact is c
   await edit(root, (task) => {
     task.plan.acceptance = [
       { id: 'observe', criterion: 'Actual behavior observed.', method: 'behavior' },
+      task.plan.acceptance.find((item) => item.id === 'quality-review')!,
     ];
   });
   expect(invoke(root, ['sync', 'probe', 'Bound the observed acceptance method.']).status).toBe(0);

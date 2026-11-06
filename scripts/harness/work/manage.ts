@@ -4,6 +4,8 @@ import { taskSummary } from './guide.ts';
 import { digest, draft, initializeMember, json, loadTask, parseTask, saveTask } from './records.ts';
 import type { Task, TaskPlan } from './records.ts';
 import { reopenDelivery, replayReopen } from './delivery.ts';
+import { loadConfig } from '../inventory.ts';
+import { registerQualityReview } from './quality-review.ts';
 
 const planFields = [
   'goal',
@@ -63,10 +65,16 @@ export async function ensureTask(root: string, raw: string) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   if (existing) {
+    const compared = { ...existing.task.plan, ...patch };
+    registerQualityReview(compared, await loadConfig(root));
     if (
       !isDeepStrictEqual(existing.task.plan.requirement, origin) ||
       Object.entries(patch).some(
-        ([key, value]) => !isDeepStrictEqual(existing.task.plan[key as keyof TaskPlan], value),
+        ([key]) =>
+          !isDeepStrictEqual(
+            existing.task.plan[key as keyof TaskPlan],
+            compared[key as keyof TaskPlan],
+          ),
       )
     )
       throw new Error(`WORK_CONFLICT: inspect ${id}; use update with its current revision`);
@@ -78,6 +86,7 @@ export async function ensureTask(root: string, raw: string) {
     );
   const task = draft(root, actor, id, '');
   Object.assign(task.plan, patch, { requirement: origin });
+  registerQualityReview(task.plan, await loadConfig(root));
   task.checkpoint = await capture(root, task);
   if (!contractIssues(task).length) task.stage = 'C0_READY';
   await saveTask(root, task);
@@ -113,6 +122,7 @@ export async function updateTask(root: string, id: string, raw: string) {
   }
   Object.assign(task.plan, patch);
   parseTask(json(task));
+  registerQualityReview(task.plan, await loadConfig(root));
   const current = await capture(root, task);
   if (
     current.candidate !== task.checkpoint?.candidate ||

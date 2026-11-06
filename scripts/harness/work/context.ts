@@ -5,6 +5,7 @@ import { beneath, inventory, loadConfig } from '../inventory.ts';
 import { checkedPath, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
 import { deliveryOutput } from './reports.ts';
+import { needsQualityReview, qualityCriterion, qualityReviewResult } from './quality-review.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 
@@ -123,6 +124,12 @@ export async function artifact(root: string, id: string, path: string): Promise<
 export async function assess(root: string, task: Task) {
   const current = await capture(root, task);
   const errors = contractIssues(task);
+  const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
+  const quality = task.plan.acceptance.find((item) => item.id === qualityCriterion.id);
+  if ((qualityRequired && !quality) || (quality && quality.method !== qualityCriterion.method))
+    errors.push(
+      'WORK_QUALITY_CONTRACT: register quality-review with method review using work update',
+    );
   const previous = task.checkpoint;
   const changed = [
     ...new Set([...Object.keys(previous?.files ?? {}), ...Object.keys(current.files)]),
@@ -149,8 +156,16 @@ export async function assess(root: string, task: Task) {
     let result = entry?.result ?? 'pending';
     if (entry) {
       try {
-        if (digest(await artifact(root, task.plan.id, entry.artifact)) !== entry.sha256)
-          result = 'corrupt';
+        const bytes = await artifact(root, task.plan.id, entry.artifact);
+        if (digest(bytes) !== entry.sha256) result = 'corrupt';
+        else if (criterion.id === qualityCriterion.id) {
+          try {
+            if (qualityReviewResult(bytes.toString('utf8'), current.candidate) !== entry.result)
+              result = 'invalid';
+          } catch {
+            result = 'invalid';
+          }
+        }
       } catch {
         result = 'missing';
       }
@@ -173,6 +188,13 @@ export async function assess(root: string, task: Task) {
     changed,
     errors,
     evidence,
+    qualityReview: {
+      required: qualityRequired,
+      criterion: qualityCriterion.id,
+      result:
+        evidence.find((item) => item.criterion === qualityCriterion.id)?.result ??
+        (qualityRequired ? 'unregistered' : 'not_required'),
+    },
     nextAction: task.plan.nextAction,
   };
 }

@@ -1,8 +1,28 @@
-import { readFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { beneath } from './inventory.ts';
 import type { HarnessConfig } from './inventory.ts';
+
+// Aliases can lack packageId; file symlinks can retain a different packageId.
+async function owningPackageName(file: string): Promise<string | undefined> {
+  let directory = dirname(await realpath(file));
+  for (;;) {
+    // Anonymous format metadata inherits ownership, but dependencies do not inherit their host's.
+    if (basename(directory) === 'node_modules') return undefined;
+    try {
+      const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')) as {
+        name?: unknown;
+      };
+      if (typeof manifest.name === 'string' && manifest.name.length > 0) return manifest.name;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
+}
 
 /** TypeScript syntax and module resolution, including type-only exports and literal dynamic imports. */
 export async function checkSource(root: string, files: readonly string[], harness: HarnessConfig) {
@@ -154,8 +174,14 @@ export async function checkSource(root: string, files: readonly string[], harnes
           errors.push(`IMPORT_UNRESOLVED ${file}: ${specifier}`);
       }
       if (!production) continue;
-      if (specifier.startsWith('@deepseek-ai/') && file !== 'src/plugin.ts') {
-        errors.push(`DSH_BOUNDARY ${file}: framework access belongs in src/plugin.ts`);
+      if (file !== 'src/plugin.ts') {
+        const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
+        if (
+          specifier.startsWith('@deepseek-ai/') ||
+          resolved?.packageId?.name.startsWith('@deepseek-ai/') ||
+          packageName?.startsWith('@deepseek-ai/')
+        )
+          errors.push(`DSH_BOUNDARY ${file}: framework access belongs in src/plugin.ts`);
       }
       if (/^(?:node:)?(?:child_process|fs|vm|worker_threads|module)(?:\/|$)/.test(specifier)) {
         errors.push(`RUNTIME_CAPABILITY ${file}: ${specifier} needs an explicit reviewed boundary`);

@@ -1,7 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import ts from 'typescript';
 import { afterEach, expect, it } from 'vitest';
 
 const project = resolve('.');
@@ -95,6 +97,158 @@ it.each([
   expect(result.status, result.output).toBe(1);
   expect(result.output).toContain(diagnostic);
 });
+
+it.each(['src/other.ts', 'src/plugin.ts'])(
+  'checks a valid framework paths alias in %s and preserves local aliases and import-like text',
+  async (file) => {
+    const root = await fixture({
+      'package.json': JSON.stringify({ type: 'module' }),
+      [file]: "export type { Context } from 'runtime-alias';",
+      'src/local.ts': `export { value } from 'local-alias';
+// import '@deepseek-ai/not-a-package';
+export const documentation = "import '@deepseek-ai/not-a-package'";`,
+    });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const manifestPath = createRequire(import.meta.url).resolve('@deepseek-ai/cordis/package.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { types: string };
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.paths = {
+      'runtime-alias': [join(dirname(manifestPath), manifest.types)],
+      'local-alias': ['./src/value.ts'],
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root);
+    expect(parsed.errors).toEqual([]);
+    const diagnostics = ts.getPreEmitDiagnostics(
+      ts.createProgram(parsed.fileNames, parsed.options),
+    );
+    expect(
+      diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, '\n')),
+    ).toEqual([]);
+    const result = check(root);
+    expect(result.status, result.output).toBe(file === 'src/plugin.ts' ? 0 : 1);
+    if (file !== 'src/plugin.ts') expect(result.output).toContain(`DSH_BOUNDARY ${file}`);
+  },
+);
+
+it.each([
+  ['@deepseek-ai/cordis', 'directory'],
+  ['@example/library', 'directory'],
+  ['@deepseek-ai/cordis', 'file'],
+  ['@example/library', 'file'],
+] as const)(
+  'checks the owning package %s through a %s symlink with an unrelated package or directory name',
+  async (name, link) => {
+    const root = await fixture({
+      'package.json': JSON.stringify({ type: 'module' }),
+      '.runtime/vendor/package.json': JSON.stringify({ name, version: '1.0.0', type: 'module' }),
+      '.runtime/vendor/lib/index.d.ts': 'export interface Context { id: string }',
+      'src/other.ts': "export type { Context } from 'runtime-alias';",
+    });
+    await mkdir(join(root, 'node_modules'));
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.types = [];
+    if (link === 'directory') {
+      await symlink(join(root, '.runtime/vendor'), join(root, 'node_modules/indirect'), 'dir');
+      config.compilerOptions.paths = {
+        'runtime-alias': ['./node_modules/indirect/lib/index.d.ts'],
+      };
+    } else {
+      await mkdir(join(root, 'node_modules/runtime-alias/lib'), { recursive: true });
+      await writeFile(
+        join(root, 'node_modules/runtime-alias/package.json'),
+        JSON.stringify({
+          name: '@example/wrapper',
+          version: '1.0.0',
+          type: 'module',
+          types: 'lib/index.d.ts',
+        }),
+      );
+      await symlink(
+        join(root, '.runtime/vendor/lib/index.d.ts'),
+        join(root, 'node_modules/runtime-alias/lib/index.d.ts'),
+      );
+    }
+    await writeFile(configPath, JSON.stringify(config));
+    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root);
+    expect(parsed.errors).toEqual([]);
+    const diagnostics = ts.getPreEmitDiagnostics(
+      ts.createProgram(parsed.fileNames, parsed.options),
+    );
+    expect(
+      diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, '\n')),
+    ).toEqual([]);
+    const result = check(root);
+    expect(result.status, result.output).toBe(name.startsWith('@deepseek-ai/') ? 1 : 0);
+    if (name.startsWith('@deepseek-ai/'))
+      expect(result.output).toContain('DSH_BOUNDARY src/other.ts');
+  },
+);
+
+it.each([
+  ['framework with format-only metadata', '@deepseek-ai/cordis', undefined, false, 1],
+  ['ordinary package with format-only metadata', '@example/library', undefined, false, 0],
+  [
+    'named ordinary child of a framework package',
+    '@deepseek-ai/cordis',
+    '@example/child',
+    false,
+    0,
+  ],
+  [
+    'named framework child of an ordinary package',
+    '@example/library',
+    '@deepseek-ai/cordis',
+    false,
+    1,
+  ],
+  [
+    'anonymous dependency nested inside a framework package',
+    '@deepseek-ai/cordis',
+    undefined,
+    true,
+    0,
+  ],
+] as const)(
+  'resolves package ownership for %s',
+  async (_label, outerName, childName, nestedDependency, expectedStatus) => {
+    const base = nestedDependency
+      ? 'node_modules/vendor/node_modules/anonymous'
+      : 'node_modules/vendor';
+    const root = await fixture({
+      'package.json': JSON.stringify({ name: '@example/application', type: 'module' }),
+      'node_modules/vendor/package.json': JSON.stringify({
+        name: outerName,
+        version: '1.0.0',
+        type: 'module',
+      }),
+      [`${base}/dist/package.json`]: JSON.stringify({
+        type: 'module',
+        ...(childName ? { name: childName, version: '1.0.0' } : {}),
+      }),
+      [`${base}/dist/index.d.ts`]: 'export interface Context { id: string }',
+      'src/other.ts': "export type { Context } from 'runtime-alias';",
+    });
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.types = [];
+    config.compilerOptions.paths = { 'runtime-alias': [`./${base}/dist/index.d.ts`] };
+    await writeFile(configPath, JSON.stringify(config));
+    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root);
+    expect(parsed.errors).toEqual([]);
+    const diagnostics = ts.getPreEmitDiagnostics(
+      ts.createProgram(parsed.fileNames, parsed.options),
+    );
+    expect(
+      diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, '\n')),
+    ).toEqual([]);
+    const result = check(root);
+    expect(result.status, result.output).toBe(expectedStatus);
+    if (expectedStatus === 1) expect(result.output).toContain('DSH_BOUNDARY src/other.ts');
+  },
+);
 
 it('accepts same-module development imports and rejects harness/service/type-export crossings', async () => {
   const root = await fixture({

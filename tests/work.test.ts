@@ -413,7 +413,7 @@ it('resumes from current facts without returning history/raw logs and keeps olde
   expect(blocked.task.goal).toBe(result.task.goal);
 });
 
-it.each(['start', 'resume', 'implement', 'verify', 'handoff', 'archive'])(
+it.each(['start', 'resume', 'implement', 'verify', 'deliver', 'handoff', 'archive'])(
   'can resolve the real documentation for %s',
   async (action) => {
     const root = await fixture();

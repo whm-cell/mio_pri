@@ -26,6 +26,10 @@ const sections: Record<string, [string, string][]> = {
     ['docs/coordination.md', '归档与保留'],
     ['docs/work-records.md', '归档命令'],
   ],
+  deliver: [
+    ['docs/coordination.md', '任务交付与重开'],
+    ['docs/work-records.md', '交付命令'],
+  ],
 };
 
 interface MarkdownNode {
@@ -75,6 +79,7 @@ export function taskSummary(task: Task, action: string) {
     reviewDecision: task.reviewDecision,
     releaseDisposition: task.releaseDisposition,
     archived: task.archived,
+    ...(task.delivery ? { delivery: task.delivery } : {}),
     authorization: task.plan.authorization,
     scope: task.plan.scope,
     inputs: task.plan.inputs,

@@ -55,6 +55,11 @@ export interface Task {
   evidence: Evidence[];
   notes: string[];
   archived: boolean;
+  delivery?: {
+    version: 1;
+    draft?: { path: string; sha256: string; candidate: string };
+    accepted?: { path: string; sha256: string; candidate: string };
+  };
 }
 
 export const digest = (bytes: string | Buffer): string =>
@@ -179,6 +184,31 @@ export function parseTask(raw: string): Task {
     )
       throw new Error('WORK_SCHEMA: candidate binding');
   }
+  if (task.delivery !== undefined) {
+    const delivery = object(task.delivery);
+    if (
+      delivery.version !== 1 ||
+      Object.keys(delivery).some((key) => !['version', 'draft', 'accepted'].includes(key))
+    )
+      throw new Error('WORK_SCHEMA: delivery');
+    for (const kind of ['draft', 'accepted']) {
+      if (delivery[kind] === undefined) continue;
+      const ref = object(delivery[kind]);
+      if (
+        typeof ref.path !== 'string' ||
+        typeof ref.sha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(ref.sha256) ||
+        typeof ref.candidate !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(ref.candidate)
+      )
+        throw new Error('WORK_SCHEMA: delivery reference');
+      const expected =
+        kind === 'draft'
+          ? `.work/tasks/${plan.id}/delivery/draft.md`
+          : `docs/tasks/complete/${plan.id}/report.md`;
+      if (ref.path !== expected) throw new Error('WORK_SCHEMA: delivery path');
+    }
+  }
   for (const item of task.evidence) {
     const entry = object(item);
     if (
@@ -282,6 +312,18 @@ export async function loadTask(root: string, id: string) {
 export async function saveTask(root: string, task: Task, previous?: string) {
   const path = await checkedPath(root, `.work/tasks/${identifier(task.plan.id)}/state.json`);
   parseTask(json(task));
+  try {
+    const operation = JSON.parse(
+      await readFile(
+        await checkedPath(root, `.work/tasks/${task.plan.id}/delivery/operation.json`),
+        'utf8',
+      ),
+    );
+    if (operation.done !== true)
+      throw new Error('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
   await mkdir(dirname(path), { recursive: true });
   if (previous === undefined) return writeFile(path, json(task), { flag: 'wx' });
   const temporary = `${path}.${randomUUID()}.tmp`;

@@ -1,6 +1,6 @@
 # 工作记录命令索引
 
-本页是 Agent 的工具接口，用户无需手动执行这些命令或编辑 JSON。Agent 先 `pnpm work guide <action>`；已有任务用 `pnpm work context <task> <action>`。动作是 start、resume、implement、verify、handoff、archive。只展开当前动作，不通读本页；判断协议见 [协调索引](coordination.md)。
+本页是 Agent 的工具接口，用户无需手动执行这些命令或编辑 JSON。Agent 先 `pnpm work guide <action>`；已有任务用 `pnpm work context <task> <action>`。动作是 start、resume、implement、verify、deliver、handoff、archive。只展开当前动作，不通读本页；判断协议见 [协调索引](coordination.md)。
 
 | 用途                   | 命令                                     |
 | ---------------------- | ---------------------------------------- |
@@ -10,6 +10,7 @@
 | 结构化更新             | `work update <task> --stdin`             |
 | 列表／核对／同步       | `work status`、`work check`、`work sync` |
 | 验证取证               | `work run`、`work evidence`              |
+| 最终交付               | `work deliver <task> --stdin`            |
 | 交接                   | `work handoff`、`work receive`           |
 | 原地保留历史           | `work archive`                           |
 
@@ -89,7 +90,49 @@ checks 或 review 必须是本任务 acceptance ID。run 只用于 automated，�
 
 evidence 只用于 review／behavior，登记本任务 evidence 目录的真实原件或已取回的共享 Markdown。原件需写实际操作者、场景、输入／环境、动作、结果和限制；记录器只绑定哈希和本机环境，不认证独立性或业务真实性。
 
-当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。收到真实人类接受后才设置 reviewDecision=ACCEPT、stage=C1_RELEASED、releaseDisposition=RELEASED，再 check；自动通过不代替这一接受。
+当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。收到针对候选的真实人类接受后通过下述 deliver complete 设置接受与释放，再 check；自动通过不代替这一接受。
+
+## 交付命令
+
+`pnpm work deliver <task> --stdin` 由 Agent 执行。首次在取证前提交 `{"action":"prepare","revision":"当前 revision"}`，启用固定输出分类并返回新候选；审阅后 sync，重新收集匹配证据。旧 v1 记录未启用时保留原候选算法。启用后的明确输出仅为本任务 complete 包和公共索引；不能将自己的输出作为需求来源，其他任务报告仍可作为输入。
+
+所有验收项通过后，准备可读草稿：
+
+```json
+{
+  "action": "prepare",
+  "revision": "当前 revision",
+  "title": "任务交付标题",
+  "modules": ["实际模块"],
+  "outcomes": "具体完成行为、范围及实现/测试入口",
+  "decisions": "必要决定；没有则明确写无",
+  "limitations": "已知限制；没有则明确写无",
+  "evidence": [
+    { "criterion": "checks", "representation": "excerpt", "text": "最终验收所需的脱敏原件摘录" }
+  ]
+}
+```
+
+每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时从原件读取 UTF-8；redacted／excerpt 必须提供共享文本。工具将摘要、环境和来源哈希写入附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。草稿保存到本人任务的 delivery/draft.md，返回新 revision 与 draft.sha256；不得以草稿存在认定完成。
+
+取得真实结果接受后：
+
+```json
+{
+  "action": "complete",
+  "revision": "准备后当前 revision",
+  "draftSha256": "已审草稿摘要",
+  "acceptance": {
+    "candidate": "已接受的受验候选",
+    "statement": "真实接受意见的必要脱敏摘录",
+    "reference": "可核对的接受来源或明确的对话定位"
+  }
+}
+```
+
+命令核对全部必需原件、候选、草稿、接受绑定，以及旧报告与附件的 HEAD 保存情况；只在全部满足时更新公共报告、必要 Markdown 附件、索引和个人接受。不会自动提交、上传或部署。准备草稿前后的代码变化使其失效；接受文本的真实性不能由字符串校验证明。
+
+中断时原样重试原 complete／reopen 请求，工具依据操作记录恢复；已完成的同一请求幂等。发现人工修改或其他写入时拒绝覆盖，先审阅冲突；未结束的交付操作会阻止其他记录写入。原报告必须先进入可恢复 Git 提交，才能被下一次完成覆盖。公共输出与候选分离仍需公共格式、链接和完整性检查，不是免检目录。
 
 ## 发送与接收
 
@@ -99,6 +142,8 @@ pnpm work receive .work/inbox/api-probe.md
 ```
 
 handoff 输出本地 `handoff-<内容摘要>.md`。相同内容复用，候选／摘要变化另建草稿，人工修改的已有文件不覆盖。审阅脱敏后沿现有渠道共享，并实际提供固定代码和所需原件；工具不上传、不复制代码、不同步他人的目录。
+
+接收方也可对 `docs/tasks/complete/<task-id>/report.md` 使用 receive：核对报告与附件，建立自己的草稿，并在个人 notes 列出当前源码与历史受验版本的差异；不要求代码相同，不继承权限或证据。原始 handoff 格式仍要求精确候选匹配。
 
 接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已有公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
 
@@ -135,4 +180,6 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 候选绑定所选字节和契约；成员、绝对工作区、HEAD 不进入内容候选，单纯提交相同内容不使证据失效。下一步、阻塞、共享导航、阶段标签不改变候选；需求关联、目标、范围、来源、授权、验收和决策改变会改变候选。没有 requirement 的旧记录保持原候选算法。revision 是整份当前记录字节摘要，和候选用途不同：进度或 notes 更新也会改变 revision。
 
-公共协议、源码和测试入库；member.json、tasks/<task>/state.json、evidence、handoff 和 inbox 位于忽略的 .work。公共 CI 不读取这些成员内容，也不替代本地 work check。备份和传输沿真实项目选择；原始历史仅在需要复现或交接时按引用取得。
+可选 delivery 字段保存固定格式版本、当前草稿与最后接受报告引用；它不是通用输出排除开关。
+
+公共协议、源码、测试和已接受交付报告入库；member.json、tasks/<task>/state.json、evidence、handoff 和 inbox 位于忽略的 .work。公共 CI 不读取这些成员内容，也不替代本地 work check。备份和传输沿真实项目选择；原始历史仅在需要复现或交接时按引用取得。

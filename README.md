@@ -4,7 +4,8 @@
 
 - [底座范围、边界与规则](docs/foundation.md)
 - [HTTP API](docs/api.md)
-- [本阶段验收记录](docs/acceptance.md)
+- [验收标准与入口](docs/acceptance.md)
+- [任务交付索引](docs/tasks/index.md)
 - [开发入口](AGENTS.md)
 - [团队任务协调](docs/coordination.md)
 

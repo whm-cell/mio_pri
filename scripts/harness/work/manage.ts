@@ -3,6 +3,7 @@ import { assess, capture, contractIssues } from './context.ts';
 import { taskSummary } from './guide.ts';
 import { digest, draft, initializeMember, json, loadTask, parseTask, saveTask } from './records.ts';
 import type { Task, TaskPlan } from './records.ts';
+import { reopenDelivery, replayReopen } from './delivery.ts';
 
 const planFields = [
   'goal',
@@ -86,6 +87,11 @@ export async function ensureTask(root: string, raw: string) {
 /** Agent assertions may update the plan and progress, never ownership, evidence or human acceptance. */
 export async function updateTask(root: string, id: string, raw: string) {
   const request = fields(JSON.parse(raw), ['revision', 'reason', 'plan', 'stage', 'reopen']);
+  const loaded = await loadTask(root, id);
+  if (request.reopen === true && (await replayReopen(root, id, request))) {
+    const current = await loadTask(root, id);
+    return inspectTask(root, current.task, current.raw);
+  }
   if (
     typeof request.revision !== 'string' ||
     typeof request.reason !== 'string' ||
@@ -93,7 +99,6 @@ export async function updateTask(root: string, id: string, raw: string) {
   )
     throw new Error('WORK_REQUEST: revision and a reconciliation reason are required');
   const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
-  const loaded = await loadTask(root, id);
   const task = loaded.task;
   if (request.revision !== digest(loaded.raw))
     throw new Error('WORK_CONFLICT: read the current context before updating');
@@ -130,6 +135,7 @@ export async function updateTask(root: string, id: string, raw: string) {
   }
   task.notes.push(`${new Date().toISOString()} ${request.reason}`);
   // Contract edits invalidate the old checkpoint; only an explicit sync acknowledges the diff.
-  await saveTask(root, task, loaded.raw);
+  if (request.reopen) await reopenDelivery(root, task, loaded.raw, request);
+  else await saveTask(root, task, loaded.raw);
   return inspectTask(root, task, json(task));
 }

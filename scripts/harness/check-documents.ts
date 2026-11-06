@@ -5,6 +5,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { beneath } from './inventory.ts';
 import type { HarnessConfig } from './inventory.ts';
+import { checkReports } from './work/reports.ts';
 
 interface MarkdownNode {
   type: string;
@@ -75,5 +76,6 @@ export async function checkDocuments(
       }
     }
   }
+  errors.push(...(await checkReports(root, files)));
   return { errors, indexChecked };
 }

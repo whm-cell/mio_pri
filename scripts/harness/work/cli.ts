@@ -14,6 +14,7 @@ import {
 import { handoff, receive } from './handoff.ts';
 import { guide, taskSummary } from './guide.ts';
 import { ensureTask, inspectTask, updateTask } from './manage.ts';
+import { deliver } from './delivery.ts';
 import {
   checkedPath,
   digest,
@@ -31,6 +32,7 @@ const help = `Usage: pnpm work <command>
 Agent operates this CLI; the user supplies goals and decisions.
   ensure --stdin                       create/reuse a PRD subtask from structured JSON
   update <task> --stdin                 update plan/progress with an expected revision
+  deliver <task> --stdin                prepare a draft or complete an accepted delivery
   init <member>                         initialize this member's workspace
   start <task> <goal> [source.md ...]    legacy draft; complete via update before sync
   status                                list local tasks
@@ -43,7 +45,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   handoff <task>                        prepare a local portable Markdown handoff
   receive <shared.md>                   verify candidate, create this member's draft
   archive <task> <reason>               mark history; retain all files
-Actions: start, resume, implement, verify, handoff, archive
+Actions: start, resume, implement, verify, deliver, handoff, archive
 Agent entry: guide start, then ensure --stdin; expand only the current action.`;
 
 async function input() {
@@ -73,6 +75,10 @@ async function main() {
   if (command === 'update') {
     if (args.length !== 2 || args[1] !== '--stdin') throw new Error(help);
     return console.log(json(await updateTask(root, args[0]!, await input())));
+  }
+  if (command === 'deliver') {
+    if (args.length !== 2 || args[1] !== '--stdin') throw new Error(help);
+    return console.log(json(await deliver(root, args[0]!, await input())));
   }
   if (command === 'status') {
     if (args.length) throw new Error(help);

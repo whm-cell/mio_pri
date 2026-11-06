@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { beneath, inventory, loadConfig } from '../inventory.ts';
 import { checkedPath, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
+import { deliveryOutput } from './reports.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 
@@ -35,7 +36,11 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       if (kind === 'source' && (!path.endsWith('.md') || !scan.files.includes(path)))
         throw new Error(`WORK_SOURCE: name an existing public Markdown file: ${path}`);
       if (!matches.length && kind !== 'scope') throw new Error(`WORK_INPUT_MISSING: ${path}`);
-      matches.forEach((file) => selected.add(file));
+      if (task.delivery && deliveryOutput(task.plan.id, path) && kind === 'source')
+        throw new Error('WORK_DELIVERY_INPUT: own delivery output cannot be a requirement/source');
+      matches.forEach((file) => {
+        if (!task.delivery || !deliveryOutput(task.plan.id, file)) selected.add(file);
+      });
     }
   }
   const files: Record<string, string> = {};
@@ -55,6 +60,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     dependencies: plan.dependencies,
     stopCondition: plan.stopCondition,
     ...(plan.requirement ? { requirement: plan.requirement } : {}),
+    ...(task.delivery ? { deliveryVersion: 1 } : {}),
   };
   const contract = digest(json(contractPlan));
   const git = (args: string[]) => {

@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 import { capture, contractIssues } from './context.ts';
 import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
+import { deliveryOutput, parseReport, reportPath } from './reports.ts';
+import { draft } from './records.ts';
 
 /** A portable proposal plus candidate manifest; local authority and evidence never transfer implicitly. */
 export async function handoff(root: string, task: Task) {
@@ -26,6 +28,7 @@ export async function handoff(root: string, task: Task) {
     releaseDisposition: 'HOLD_FOR_EVIDENCE',
     evidence: [],
     archived: false,
+    ...(task.delivery ? { delivery: { version: 1 as const } } : {}),
     checkpoint: task.checkpoint,
     plan: {
       id: plan.id,
@@ -75,6 +78,39 @@ export async function receive(root: string, source: string) {
   )
     throw new Error('WORK_HANDOFF_PATH: retrieve the shared Markdown into .work/inbox/ or docs/');
   const markdown = await readFile(await checkedPath(root, source), 'utf8');
+  if (source.startsWith('docs/tasks/complete/') && source.endsWith('/report.md')) {
+    const report = parseReport(markdown);
+    if (source !== reportPath(report.id))
+      throw new Error('WORK_REPORT_FORMAT: task/report location mismatch');
+    for (const entry of report.evidence) {
+      const bytes = await readFile(await checkedPath(root, `${dirname(source)}/${entry.path}`));
+      if (digest(bytes) !== entry.sha256)
+        throw new Error('WORK_REPORT_EVIDENCE: shared artifact differs');
+    }
+    const task = draft(root, await member(root), report.id, report.contract.goal);
+    Object.assign(task.plan, report.contract, {
+      authorization: '',
+      sharedRef: source,
+      dependencies: report.contract.dependencies.map((entry) => ({ ...entry, ready: false })),
+    });
+    task.delivery = {
+      version: 1,
+      accepted: { path: source, sha256: digest(markdown), candidate: report.checkpoint.candidate },
+    };
+    const current = await capture(root, task);
+    const changed = [
+      ...new Set([...Object.keys(current.files), ...Object.keys(report.checkpoint.files)]),
+    ].filter(
+      (path) =>
+        current.files[path] !== report.checkpoint.files[path] &&
+        !deliveryOutput(task.plan.id, path),
+    );
+    task.notes.push(
+      `Recovered accepted report ${source} (${digest(markdown)}), tested ${report.checkpoint.candidate}; changed inputs: ${changed.join(', ') || 'none'}. Inspect current requirements and authority; no passes inherited.`,
+    );
+    await saveTask(root, task);
+    return task;
+  }
   const blocks = [...markdown.matchAll(/^```mio-work-handoff\r?\n([\s\S]*?)^```\s*$/gm)];
   if (blocks.length !== 1)
     throw new Error('WORK_HANDOFF_FORMAT: expected one mio-work-handoff block');

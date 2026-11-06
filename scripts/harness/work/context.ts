@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { lstat, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { beneath, inventory, loadConfig } from './inventory.ts';
-import { checkedPath, digest, json } from './work-records.ts';
-import type { Checkpoint, Evidence, Task } from './work-records.ts';
+import { beneath, inventory, loadConfig } from '../inventory.ts';
+import { checkedPath, digest, json } from './records.ts';
+import type { Checkpoint, Evidence, Task } from './records.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 

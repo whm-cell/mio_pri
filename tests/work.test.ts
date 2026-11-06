@@ -3,10 +3,10 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import type { Task } from '../scripts/work-records.ts';
+import type { Task } from '../scripts/harness/work/records.ts';
 
 const project = resolve('.');
-const cli = join(project, 'scripts/work.ts');
+const cli = join(project, 'scripts/harness/work/cli.ts');
 const scratch: string[] = [];
 afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -20,14 +20,14 @@ async function fixture(actor = 'alice') {
     'package.json': '{"type":"module"}\n',
     '.gitignore': '.work/\n',
     'AGENTS.md': '# Development\n',
-    'docs/coordination.md': '# Coordination\n',
-    'docs/work-records.md': '# Records\n',
     'docs/api.md': '# API\n',
     'src/value.ts': 'export const value = 1;\n',
   })) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await writeFile(join(root, file), source);
   }
+  for (const file of ['docs/coordination.md', 'docs/work-records.md'])
+    await cp(join(project, file), join(root, file));
   expect(spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: root }).status).toBe(0);
   expect(invoke(root, ['init', actor]).status).toBe(0);
   return root;
@@ -95,6 +95,123 @@ it('initializes without Skills, retains existing records and refuses another mem
   expect(invoke(root, ['start', 'probe', 'Replacement']).status).toBe(1);
   expect(await readFile(statePath(root), 'utf8')).toBe(original);
   expect(await readFile(join(root, '.work/evidence/legacy.log'), 'utf8')).toBe('original failure');
+});
+
+it('offers start guidance without personal records and returns only the selected action', async () => {
+  const root = await fixture();
+  await rm(join(root, '.work'), { recursive: true });
+  const start = invoke(root, ['guide', 'start']);
+  expect(start.status, start.output).toBe(0);
+  expect(JSON.parse(start.output).reading.map((item: { ref: string }) => item.ref)).toEqual([
+    'docs/coordination.md#共同规则',
+    'docs/coordination.md#开始任务',
+    'docs/work-records.md#创建任务',
+  ]);
+  expect(start.output).not.toContain('## 跨人交接');
+  expect(start.output).not.toContain('## 记录结构');
+  const before = start.output;
+  await writeFile(
+    join(root, 'docs/coordination.md'),
+    (await readFile(join(root, 'docs/coordination.md'), 'utf8')) +
+      '\n## 无关模式\nunrelated newly added mode\n',
+  );
+  expect(invoke(root, ['guide', 'start']).output).toBe(before);
+  expect(invoke(root, ['guide', 'constructor']).output).toContain('WORK_ACTION');
+});
+
+it('does not interpret example headings as guide sections and rejects absent or duplicate routing targets', async () => {
+  const root = await fixture();
+  const path = join(root, 'docs/coordination.md');
+  await writeFile(
+    path,
+    '# Guide\n## 共同规则\nPreserve common obligations.\n## 开始任务\nCurrent task.\n```md\n## example heading\n```\n## 跨人交接\nforeign-mode-marker\n',
+  );
+  const result = invoke(root, ['guide', 'start']);
+  expect(result.status).toBe(0);
+  expect(result.output).toContain('example heading');
+  expect(result.output).not.toContain('foreign-mode-marker');
+  await writeFile(path, '# Missing route\n');
+  expect(invoke(root, ['guide', 'start']).output).toContain('WORK_GUIDE_SECTION');
+  await writeFile(path, '## 共同规则\none\n## 共同规则\ntwo\n');
+  expect(invoke(root, ['guide', 'start']).output).toContain('WORK_GUIDE_SECTION');
+});
+
+it('resumes from current facts without returning history/raw logs and keeps older records readable', async () => {
+  const root = await fixture();
+  await ready(root);
+  expect(run(root, 'console.log("raw-log-marker")').status).toBe(0);
+  await edit(root, (task) => {
+    task.notes = ['historical-note-marker'];
+    task.plan.sources.push('AGENTS.md', 'docs/coordination.md', 'docs/work-records.md');
+  });
+  expect(invoke(root, ['sync', 'probe', 'Old default source list retained.']).status).toBe(0);
+  const before = await readFile(statePath(root), 'utf8');
+  const output = invoke(root, ['context', 'probe', 'resume']);
+  expect(output.status, output.output).toBe(0);
+  const result = JSON.parse(output.output);
+  expect(result.task.authorization).toBe((await state(root)).plan.authorization);
+  expect(result.task.goal).toBe((await state(root)).plan.goal);
+  expect(result.reading.map((item: { ref: string }) => item.ref)).toEqual([
+    'docs/coordination.md#共同规则',
+    'docs/coordination.md#恢复与同步',
+    'docs/work-records.md#核对与同步',
+  ]);
+  expect(output.output).not.toContain('historical-note-marker');
+  expect(output.output).not.toContain('raw-log-marker');
+  expect(output.output).not.toContain('## 发送与接收');
+  expect(await readFile(statePath(root), 'utf8')).toBe(before);
+  await edit(root, (task) => {
+    task.plan.inputs.push('missing.ts');
+  });
+  const blocked = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  expect(blocked.assessment.ready).toBe(false);
+  expect(blocked.task.goal).toBe(result.task.goal);
+});
+
+it.each(['start', 'resume', 'implement', 'verify', 'handoff', 'archive'])(
+  'can resolve the real documentation for %s',
+  async (action) => {
+    const root = await fixture();
+    const result = invoke(root, ['guide', action]);
+    expect(result.status, result.output).toBe(0);
+    expect(JSON.parse(result.output).reading[0].ref).toBe('docs/coordination.md#共同规则');
+  },
+);
+
+it('preserves current decision authority and blocking reasons in progressive summaries', async () => {
+  const root = await fixture();
+  await ready(root);
+  await edit(root, (task) => {
+    task.plan.decisions = [
+      { status: 'CONFIRMED', text: 'Preserve caller identity.', source: 'Current human contract' },
+      { status: 'AI_PROPOSED', text: 'Optional implementation idea.', source: 'Agent proposal' },
+    ];
+  });
+  expect(
+    invoke(root, [
+      'sync',
+      'probe',
+      'Read the confirmed decision and retained the proposal as a proposal.',
+    ]).status,
+  ).toBe(0);
+  const current = JSON.parse(invoke(root, ['context', 'probe', 'implement']).output);
+  expect(current.task.decisions).toEqual((await state(root)).plan.decisions);
+  await edit(root, (task) => {
+    task.plan.decisions.push({
+      status: 'OPEN',
+      text: 'Choose the shared contract.',
+      source: 'Unresolved human decision',
+    });
+  });
+  const blocked = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  expect(blocked.assessment.ready).toBe(false);
+  expect(blocked.task.decisions.at(-1)).toEqual({
+    status: 'OPEN',
+    text: 'Choose the shared contract.',
+    source: 'Unresolved human decision',
+  });
+  expect(blocked.task.reviewDecision).toBe('PENDING');
+  expect(blocked.task.archived).toBe(false);
 });
 
 it('requires a real task contract and never treats a fresh draft or passing check as human acceptance', async () => {

@@ -201,7 +201,7 @@ export function draft(root: string, actor: string, id: string, goal: string): Ta
       goal,
       scope: [],
       inputs: ['package.json', 'harness.config.json'],
-      sources: ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'],
+      sources: [],
       authorization: '',
       nonGoals: [],
       acceptance: [],

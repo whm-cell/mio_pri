@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { capture, contractIssues } from './work-context.ts';
-import { checkedPath, digest, json, member, parseTask, saveTask } from './work-records.ts';
-import type { Task } from './work-records.ts';
+import { capture, contractIssues } from './context.ts';
+import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
+import type { Task } from './records.ts';
 
 /** A portable proposal plus candidate manifest; local authority and evidence never transfer implicitly. */
 export async function handoff(root: string, task: Task) {

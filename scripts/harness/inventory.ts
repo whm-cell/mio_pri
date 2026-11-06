@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 export interface HarnessConfig {
   sourceRoots: Record<string, 'production' | 'test' | 'development'>;
+  developmentDependencies: Record<string, string[]>;
   documentRoots: string[];
   privateRoots: string[];
   generatedRoots: string[];

@@ -1,5 +1,14 @@
 {
-  "sourceRoots": { "src": "production", "tests": "test", "scripts": "development" },
+  "sourceRoots": {
+    "src": "production",
+    "tests": "test",
+    "scripts/harness": "development",
+    "scripts/service": "development"
+  },
+  "developmentDependencies": {
+    "scripts/harness": ["scripts/harness"],
+    "scripts/service": ["scripts/service"]
+  },
   "documentRoots": ["README.md", "AGENTS.md", "docs"],
   "privateRoots": [".work", ".runtime"],
   "generatedRoots": ["node_modules", "dist", "coverage", ".git"],

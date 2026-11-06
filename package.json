@@ -35,12 +35,12 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "guard": "node scripts/check-guardrails.ts",
-    "work": "node scripts/work.ts",
+    "guard": "node scripts/harness/check-guardrails.ts",
+    "work": "node scripts/harness/work/cli.ts",
     "test": "vitest run",
-    "test:smoke": "node scripts/smoke.ts",
-    "profile:prepare": "node scripts/prepare-profile.ts",
-    "start": "node scripts/start.ts",
+    "test:smoke": "node scripts/service/smoke.ts",
+    "profile:prepare": "node scripts/service/prepare-profile.ts",
+    "start": "node scripts/service/start.ts",
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm guard && pnpm test && pnpm build && pnpm test:smoke"
   },
   "peerDependencies": {

@@ -10,8 +10,9 @@ import {
   contractIssues,
   environment,
   inputStamp,
-} from './work-context.ts';
-import { handoff, receive } from './work-handoff.ts';
+} from './context.ts';
+import { handoff, receive } from './handoff.ts';
+import { guide, taskSummary } from './guide.ts';
 import {
   checkedPath,
   digest,
@@ -21,7 +22,7 @@ import {
   loadTask,
   member,
   saveTask,
-} from './work-records.ts';
+} from './records.ts';
 
 const root = await realpath('.');
 const [command, ...args] = process.argv.slice(2);
@@ -29,6 +30,8 @@ const help = `Usage: pnpm work <command>
   init <member>                         initialize this member's workspace
   start <task> <goal> [source.md ...]    create a draft; edit its contract before sync
   status                                list local tasks
+  guide <action>                        read common rules and one action, without local records
+  context <task> <action>               read current task summary, checks and one action
   check <task>                          read-only context/evidence assessment
   sync <task> <reason>                  acknowledge inspected changes; retain evidence
   run <task> <criterion> -- <argv ...>  capture an automated check without a shell
@@ -36,12 +39,17 @@ const help = `Usage: pnpm work <command>
   handoff <task>                        prepare a local portable Markdown handoff
   receive <shared.md>                   verify candidate, create this member's draft
   archive <task> <reason>               mark history; retain all files
-Protocol: docs/coordination.md and docs/work-records.md`;
+Actions: start, resume, implement, verify, handoff, archive
+Start: pnpm work guide start; expand only the current action.`;
 
 async function main() {
   if (!command || command === 'help') return console.log(help);
   // Commands are a repository development tool, never a product-runtime dependency.
   await readFile(await checkedPath(root, 'harness.config.json'));
+  if (command === 'guide') {
+    if (args.length !== 1) throw new Error(help);
+    return console.log(json(await guide(root, args[0]!)));
+  }
   if (command === 'init') {
     if (args.length !== 1) throw new Error(help);
     const actor = identifier(args[0]!);
@@ -93,6 +101,20 @@ async function main() {
   }
   if (!args[0]) throw new Error(help);
   const { task, raw } = await loadTask(root, args[0]);
+  if (command === 'context') {
+    if (args.length !== 2) throw new Error(help);
+    const reading = await guide(root, args[1]!);
+    let assessment;
+    try {
+      assessment = await assess(root, task);
+    } catch (error) {
+      assessment = {
+        ready: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+      };
+    }
+    return console.log(json({ task: taskSummary(task, args[1]!), assessment, ...reading }));
+  }
   if (command === 'check') {
     if (args.length !== 1) throw new Error(help);
     const result = await assess(root, task);

@@ -24,8 +24,15 @@ export async function checkSource(root: string, files: readonly string[], harnes
 
   const roleOf = (path: string) =>
     Object.entries(harness.sourceRoots).find(([base]) => beneath(path, base))?.[1];
+  for (const [base, role] of Object.entries(harness.sourceRoots)) {
+    if (role === 'development' && !Array.isArray(harness.developmentDependencies?.[base]))
+      errors.push(`DEVELOPMENT_RULE_MISSING ${base}: declare allowed development dependencies`);
+  }
   for (const file of files.filter((path) => roleOf(path) !== undefined && path.endsWith('.ts'))) {
     const production = roleOf(file) === 'production';
+    const developmentRoot = Object.keys(harness.sourceRoots).find(
+      (base) => beneath(file, base) && harness.sourceRoots[base] === 'development',
+    );
     if (!typedFiles.has(resolve(root, file))) {
       errors.push(`SOURCE_NOT_TYPECHECKED ${file}: include it in tsconfig.json`);
     }
@@ -34,7 +41,13 @@ export async function checkSource(root: string, files: readonly string[], harnes
     }
     const text = await readFile(join(root, file), 'utf8');
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const imports: string[] = [];
+    source.impliedNodeFormat = ts.getImpliedNodeFormatForFile(
+      join(root, file),
+      undefined,
+      ts.sys,
+      parsed.options,
+    );
+    const imports: { specifier: string; mode: ts.ResolutionMode }[] = [];
     let functions = 0;
     let longestFunction = 0;
     let deepestBlock = 0;
@@ -65,20 +78,29 @@ export async function checkSource(root: string, files: readonly string[], harnes
         node.moduleSpecifier &&
         ts.isStringLiteral(node.moduleSpecifier)
       )
-        imports.push(node.moduleSpecifier.text);
+        imports.push({
+          specifier: node.moduleSpecifier.text,
+          mode: ts.getModeForUsageLocation(source, node.moduleSpecifier, parsed.options),
+        });
       if (
         ts.isImportTypeNode(node) &&
         ts.isLiteralTypeNode(node.argument) &&
         ts.isStringLiteral(node.argument.literal)
       )
-        imports.push(node.argument.literal.text);
+        imports.push({
+          specifier: node.argument.literal.text,
+          mode: ts.getModeForUsageLocation(source, node.argument.literal, parsed.options),
+        });
       if (
         ts.isImportEqualsDeclaration(node) &&
         ts.isExternalModuleReference(node.moduleReference) &&
         node.moduleReference.expression &&
         ts.isStringLiteral(node.moduleReference.expression)
       ) {
-        imports.push(node.moduleReference.expression.text);
+        imports.push({
+          specifier: node.moduleReference.expression.text,
+          mode: ts.ModuleKind.CommonJS,
+        });
       }
       if (
         ts.isCallExpression(node) &&
@@ -86,19 +108,30 @@ export async function checkSource(root: string, files: readonly string[], harnes
           (ts.isIdentifier(node.expression) && node.expression.text === 'require'))
       ) {
         const arg = node.arguments[0];
-        if (arg && ts.isStringLiteralLike(arg)) imports.push(arg.text);
-        else if (production) errors.push(`DYNAMIC_IMPORT ${file}: runtime target must be explicit`);
+        if (arg && ts.isStringLiteralLike(arg))
+          imports.push({
+            specifier: arg.text,
+            mode:
+              node.expression.kind === ts.SyntaxKind.ImportKeyword
+                ? ts.getModeForUsageLocation(source, arg, parsed.options)
+                : ts.ModuleKind.CommonJS,
+          });
+        else if (production || developmentRoot)
+          errors.push(`DYNAMIC_IMPORT ${file}: checked module target must be explicit`);
       }
       ts.forEachChild(node, (child) => visit(child, nextDepth));
     };
     visit(source);
     const edges: string[] = [];
-    for (const specifier of imports) {
+    for (const { specifier, mode } of imports) {
       const resolved = ts.resolveModuleName(
         specifier,
         join(root, file),
         parsed.options,
         ts.sys,
+        undefined,
+        undefined,
+        mode,
       ).resolvedModule;
       const target = resolved && relative(root, resolved.resolvedFileName).replaceAll('\\', '/');
       if (
@@ -107,6 +140,18 @@ export async function checkSource(root: string, files: readonly string[], harnes
         isAbsolute(specifier)
       ) {
         errors.push(`PUBLIC_IMPORT ${file}: ${specifier}`);
+      }
+      if (developmentRoot) {
+        if (target && !resolved?.isExternalLibraryImport) {
+          const allowed = harness.developmentDependencies?.[developmentRoot] ?? [];
+          if (!allowed.some((base) => beneath(target, base)))
+            errors.push(
+              `DEVELOPMENT_DEPENDENCY ${file}: ${target} is outside ${developmentRoot}'s allowed dependencies`,
+            );
+          else edges.push(target);
+        }
+        if (specifier.startsWith('.') && (!target || !resolve(root, target).startsWith(`${root}/`)))
+          errors.push(`IMPORT_UNRESOLVED ${file}: ${specifier}`);
       }
       if (!production) continue;
       if (specifier.startsWith('@deepseek-ai/') && file !== 'src/plugin.ts') {

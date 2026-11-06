@@ -43,7 +43,9 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 ## 日常维护
 
-每位成员开始开发时执行 `pnpm work init <member>`，再按 [协调协议](docs/coordination.md) 创建或恢复自己的任务。`pnpm work help` 列出仓库内的记录、核对、验证和交接命令；详细示例见 [记录和命令](docs/work-records.md)。这些命令只在显式执行时运行，开发者或当前 Agent 承担任务推进。
+新成员先 `pnpm work guide start`，沿输出初始化并创建任务；续接用 `pnpm work context <task> resume`。输出只包含共同规则、当前动作及必要的任务摘要，按缺口再展开相关规格章节。动作索引见 [协调协议](docs/coordination.md)，未知命令查 `pnpm work help`。开发者或当前 Agent 显式执行这些命令并承担推进。
+
+开发脚本按职责分为 `scripts/harness/`（工程护栏与任务协调）和 `scripts/service/`（Profile、启动、产物 smoke）。目录归属与开发模块依赖均由 `harness.config.json` 声明；`pnpm check` 组合公共检查与服务装载验证，生产代码保持独立。
 
 一般修改执行相关测试与检查，交付前运行 `pnpm check`。业务工具/权限变化必须测试真实执行链；接口变化更新同一份 API 契约。新增源文件自动继承所属模块规则，新模块需要在护栏配置中说明允许依赖。体量报告是审阅信号，不是自动拆分指令。
 

@@ -1,0 +1,71 @@
+# 认证底座
+
+项目负责人已确认：Mio 自建邮箱/密码登录，允许自助注册，首期注册即可登录；邮箱验证后续接入。当前按个人项目使用设计，用户具有稳定 userId，团队和多租户不在本切片建设。
+
+实现采用 Better Auth 1.7.18、pg 8.23.1 与 PostgreSQL，复用库的密码派生、签名 cookie、会话过期和撤销，不自行设计密码学或 JWT。认证表由固定版本的库模型定义；升级须审阅迁移和公开接口并重跑真实 DB、DSH 与打包产物验证。
+
+## 配置与迁移
+
+配置只从服务端环境注入，不写入仓库、Profile 或前端构建。
+
+| 变量                       | 要求                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `MIO_AUTH_BASE_URL`        | 固定对外 origin，如 `https://mio.example.com`，不含路径或末尾 `/`；HTTPS，回环主机可用 HTTP 开发 |
+| `MIO_AUTH_SECRET`          | 至少 32 字符的随机秘密，重启时保持；轮换会使旧签名 cookie 失效                                   |
+| `MIO_AUTH_DATABASE_URL`    | 专用 PostgreSQL 数据库连接，凭据只在服务端持有                                                   |
+| `MIO_AUTH_ALLOWED_ORIGINS` | 额外精确 origin 的 JSON 数组，默认 `[]`；BASE_URL 自身自动包含，禁止通配符                       |
+
+三个必要配置均未提供时保持原无 DB 的 foundation Profile；提供任一却不完整会拒绝装载，不能静默降级。此兼容边界用于既有基础插件和开发环境；启用认证须配置完整并先迁移。
+
+```sh
+pnpm auth:migrate
+pnpm auth:migrate --apply
+pnpm build
+pnpm start
+```
+
+第一条只输出迁移计划，第二条才执行。发现库无法自动修复的结构问题（例如额外必填列）时，两种模式均报错，须先审阅并修复目标结构。迁移和运行时复用 `src/auth/config.ts`，普通插件启动只检查结构和连接，不自动建表。目标库需单独备份；升级时的删除、改名、回填应单独审阅，不能假定自动回滚。通用 guard 不连接或修改业务库。
+
+认证与 `MIO_API_TOKEN` 分离，后者仍只保护 foundation 能力查询，不能作为 userId。认证启用失败时插件不注册 readyz 或业务路由；成功后 readyz 只表明本次装载就绪，不持续查询数据库健康。
+
+## HTTP 入口
+
+只开放下列认证路由，其他库插件、邮箱修改、邮件找回、账号删除及 OAuth 入口不隐式开放。所有 POST 必须携带允许的 Origin 和 JSON，正文最多 16 KiB、读取超时 10 秒。浏览器请求使用 `credentials: 'include'`。
+
+| 入口                                   | 输入与结果                                                                                                           |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/auth/sign-up/email`         | `name,email,password`；邮箱归一化，密码 12–128 字符；成功建立账号与会话，emailVerified=false，客户端不能自授验证状态 |
+| `POST /api/auth/sign-in/email`         | `email,password`；成功签发会话 cookie，错误凭据返回 401                                                              |
+| `GET /api/auth/get-session`            | Cookie；返回会话和用户，无有效会话时返回 null；客户端通过此入口刷新 cookie                                           |
+| `POST /api/auth/sign-out`              | Cookie 与 `{}`；撤销当前会话并清除 cookie                                                                            |
+| `POST /api/auth/change-password`       | Cookie 与 `currentPassword,newPassword,revokeOtherSessions`；验证旧密码后修改，最后一项为 true 时撤销其他会话        |
+| `GET /api/auth/list-sessions`          | Cookie；只列当前用户会话                                                                                             |
+| `POST /api/auth/revoke-session`        | Cookie 与 `token`；只撤销当前用户的目标。不存在或其他用户目标也返回 `{status:true}`，不代表已删除目标                |
+| `POST /api/auth/revoke-other-sessions` | Cookie 与 `{}`；撤销当前用户其他会话                                                                                 |
+| `POST /api/auth/revoke-sessions`       | Cookie 与 `{}`；撤销当前用户全部会话                                                                                 |
+| `GET /api/v1/me`                       | Cookie；数据库校验后返回 `{userId,sessionId}`。无效/过期/撤销或仅有服务 token 时返回 401                             |
+
+cookie 使用 HttpOnly、SameSite=Lax，HTTPS 配置带 Secure，不设置跨域 cookie domain。固定 BASE_URL，不信任 Host/转发头决定 URL。前端与服务应同站点或同源反向代理部署；Origin 白名单不会让不同站点的浏览器发送 Lax cookie。当前没有浏览器页面或浏览器验收。
+
+会话默认 7 天、1 天后可刷新；禁用 cookie 会话缓存，身份与撤销查询以 DB 为准。`/api/v1/me` 只校验身份，不刷新会话；客户端经 `/api/auth/get-session` 同时续期 DB 与 cookie。数据库池和路由随插件生命周期初始化/释放；重载且 secret/数据库不变时会话继续有效。
+
+认证库响应沿固定版本契约，错误通常为 `{code,message}`，限流等保留库响应；适配器的 Origin、方法、正文或基础设施错误采用 `{error:{code,message,requestId}}`。所有响应带 `X-Request-Id`、`Cache-Control: no-store`，消费者按入口与 HTTP 状态处理，不能假定与旧 foundation 错误体完全相同。
+
+限流采用直接连接地址，覆盖客户端传来的 IP 头：登录每分钟 10 次、注册每分钟 5 次；其他入口沿用库的全局及敏感操作规则，计数存入 DB。代理后的客户端共享代理地址限额，正式部署需要在可信边缘配置限流；当前未验证任意代理链或多实例容量。库自身 CSRF 和适配器 Origin 检查均保留。
+
+## 职责与限制
+
+- `src/auth/config.ts` 统一配置，`service.ts` 持有认证库与 DB 池，`http.ts` 负责白名单、来源、正文上限和响应适配；`plugin.ts` 仅装配与释放。
+- `/api/v1/me` 是可信身份能力的实际消费者。未来项目服务用该身份另行判断资源归属；登录成功不等于能访问任意项目。项目 CRUD 尚未实现。
+- 首期邮箱未验证，不能用于第三方账号联结、团队邀请信任或邮件找回。邮箱验证、邮件找回、MFA、团队与生成分别按后续契约接入；未开放的入口返回 404。
+- 数据库错误不向客户端暴露连接串或异常栈；密码、cookie、会话 token 和部署秘密不写入公共日志或报告。
+
+## 验证
+
+`pnpm test` 包含真实 PostgreSQL 集成：默认用 PATH 中的 `initdb`/`pg_ctl` 创建并清理独立临时集群；也可显式提供 `MIO_TEST_DATABASE_URL`，库名必须以 `_test` 结尾，每轮仅创建/清理自己的随机 schema。禁止使用业务库。CI 配置提供 PostgreSQL 16 服务。
+
+`tests/auth.test.ts` 经真实 DSH HTTP 覆盖注册、重复邮箱、错误密码、会话失效/撤销与续期、密码更新、跨账号隔离、重载持久化、HTTPS cookie、来源/请求体/限流、迁移幂等与结构异常、注册事务回滚/并发唯一性、启动失败和启动中卸载；还构建并装载正式打包产物验证认证。原有工具拒绝、HTTP 错误与端口释放测试保留。
+
+测试不等于邮箱所有权、真实浏览器、生产容量或项目业务验收。接受结果沿 [验收入口](acceptance.md) 和任务报告查询。
+
+实现依据：[固定版本数据库与迁移](https://github.com/better-auth/better-auth/blob/v1.7.18/docs/content/docs/concepts/database.mdx)、[邮箱密码认证](https://github.com/better-auth/better-auth/blob/v1.7.18/docs/content/docs/authentication/email-password.mdx)，以及本地安装包公开类型/实现；上游说明不替代本项目真实入口验证。

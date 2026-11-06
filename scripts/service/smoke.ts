@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readdir, rm, symlink } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -57,6 +57,13 @@ try {
     MIO_API_TOKEN: token,
     MIO_PORT: String(port),
     MIO_HOST: '127.0.0.1',
+    ...(process.env.MIO_SMOKE_AUTH_DATABASE_URL
+      ? {
+          MIO_AUTH_DATABASE_URL: process.env.MIO_SMOKE_AUTH_DATABASE_URL,
+          MIO_AUTH_BASE_URL: origin,
+          MIO_AUTH_SECRET: randomBytes(40).toString('hex'),
+        }
+      : {}),
   };
   const child = spawn(process.execPath, [launcher(), '--profile', 'mio'], {
     cwd: runDir,
@@ -99,6 +106,35 @@ try {
       sessions: false,
     });
     assert.equal((await fetch(`${origin}/api/v1/capabilities`)).status, 401);
+    if (process.env.MIO_SMOKE_AUTH_DATABASE_URL) {
+      const signup = await fetch(`${origin}/api/auth/sign-up/email`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Smoke',
+          email: `smoke-${randomUUID()}@example.test`,
+          password: randomBytes(24).toString('hex'),
+        }),
+      });
+      assert.equal(signup.status, 200);
+      const cookie = signup.headers
+        .getSetCookie()
+        .map((value) => value.split(';')[0])
+        .join('; ');
+      const me = await fetch(`${origin}/api/v1/me`, { headers: { origin, cookie } });
+      assert.equal(me.status, 200);
+      const signout = await fetch(`${origin}/api/auth/sign-out`, {
+        method: 'POST',
+        headers: { origin, cookie, 'content-type': 'application/json' },
+        body: '{}',
+      });
+      assert.equal(signout.status, 200);
+      assert.equal(
+        (await fetch(`${origin}/api/v1/me`, { headers: { origin, cookie } })).status,
+        401,
+      );
+      console.log('PASS: authentication registration, identity and logout from packed plugin.');
+    }
     child.kill('SIGTERM');
     const stopped = await Promise.race([exit.then(() => true), delay(5000).then(() => false)]);
     assert(stopped, `DSH did not stop gracefully: ${output}`);

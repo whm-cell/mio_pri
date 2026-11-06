@@ -365,3 +365,56 @@ it('refuses a classified production root omitted from typecheck and build config
   expect(result.output).toContain('SOURCE_NOT_TYPECHECKED worker/run.ts');
   expect(result.output).toContain('SOURCE_NOT_BUILT worker/run.ts');
 });
+
+it('allows only the explicit service migration config edge and isolates auth packages', async () => {
+  const root = await fixture({
+    'src/auth/config.ts': 'export const value = 1;',
+    'src/auth/service.ts': 'export const service = 1;',
+    'scripts/service/migrate.ts':
+      "import { value } from '../../src/auth/config.ts'; export { value };",
+  });
+  expect(check(root).status).toBe(0);
+  await writeFile(
+    join(root, 'scripts/service/migrate.ts'),
+    "export { service } from '../../src/auth/service.ts';",
+  );
+  expect(check(root).output).toContain('DEVELOPMENT_DEPENDENCY');
+  await writeFile(join(root, 'scripts/service/migrate.ts'), 'export {};');
+  await writeFile(join(root, 'src/bypass.ts'), "import { Pool } from 'pg'; export { Pool };");
+  expect(check(root).output).toContain('AUTH_ADAPTER');
+  await rm(join(root, 'src/bypass.ts'));
+  await writeFile(join(root, 'src/auth/service.ts'), "import { Pool } from 'pg'; export { Pool };");
+  expect(check(root).status).toBe(0);
+  await writeFile(join(root, 'src/bypass.ts'), "export { authOptions } from 'better-auth';");
+  expect(check(root).output).toContain('AUTH_ADAPTER');
+});
+
+it.each(['src/plugin.ts', 'src/auth/query.ts'])(
+  'resolves database and authentication type aliases before checking the boundary in %s',
+  async (file) => {
+    const root = await fixture({
+      'package.json': JSON.stringify({ type: 'module' }),
+      [file]:
+        "export type { Pool } from 'database-alias'; export type { BetterAuthOptions } from 'authentication-alias';",
+    });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.paths = {
+      'database-alias': [join(project, 'node_modules/@types/pg/index.d.ts')],
+      'authentication-alias': [join(project, 'node_modules/better-auth/dist/index.d.mts')],
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const parsed = ts.parseJsonConfigFileContent(config, ts.sys, root);
+    expect(parsed.errors).toEqual([]);
+    const diagnostics = ts.getPreEmitDiagnostics(
+      ts.createProgram(parsed.fileNames, parsed.options),
+    );
+    expect(
+      diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, '\n')),
+    ).toEqual([]);
+    const result = check(root);
+    expect(result.status, result.output).toBe(file.startsWith('src/auth/') ? 0 : 1);
+    if (file === 'src/plugin.ts') expect(result.output.match(/AUTH_ADAPTER/g)).toHaveLength(2);
+  },
+);

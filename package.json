@@ -40,6 +40,7 @@
     "test": "vitest run",
     "test:smoke": "node scripts/service/smoke.ts",
     "profile:prepare": "node scripts/service/prepare-profile.ts",
+    "auth:migrate": "node scripts/service/migrate-auth.ts",
     "start": "node scripts/service/start.ts",
     "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm guard && pnpm test && pnpm build && pnpm test:smoke"
   },
@@ -51,13 +52,16 @@
     "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
-    "@deepseek-ai/schemastery": "3.19.0"
+    "@deepseek-ai/schemastery": "3.19.0",
+    "better-auth": "1.7.18",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.1.0",
     "@deepseek-ai/dsh": "0.2.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
     "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
     "eslint": "10.14.0",
     "prettier": "3.9.10",
     "remark-parse": "11.0.0",

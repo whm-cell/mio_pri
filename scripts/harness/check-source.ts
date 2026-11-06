@@ -174,8 +174,19 @@ export async function checkSource(root: string, files: readonly string[], harnes
           errors.push(`IMPORT_UNRESOLVED ${file}: ${specifier}`);
       }
       if (!production) continue;
+      const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
+      const authPackage = [specifier.split('/')[0], resolved?.packageId?.name, packageName].some(
+        (name) =>
+          name === 'better-auth' ||
+          name === 'pg' ||
+          name === '@types/pg' ||
+          name?.startsWith('@better-auth/'),
+      );
+      if ((authPackage || specifier.startsWith('@better-auth/')) && !beneath(file, 'src/auth'))
+        errors.push(
+          `AUTH_ADAPTER ${file}: authentication and database packages belong in src/auth`,
+        );
       if (file !== 'src/plugin.ts') {
-        const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
         if (
           specifier.startsWith('@deepseek-ai/') ||
           resolved?.packageId?.name.startsWith('@deepseek-ai/') ||

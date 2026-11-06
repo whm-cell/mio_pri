@@ -18,7 +18,7 @@
 
 ## 创建任务
 
-Agent 从公共 PRD／相关规格与用户指令拆解当前子任务，再调用 `pnpm work ensure --stdin`，示例请求：
+Agent 依 [拆解与生命周期](coordination.md#开始任务) 从公共 PRD／规格和当前用户目标形成执行任务，再调用 `pnpm work ensure --stdin`。下面是字段示例，不是预先决定的任务：
 
 ```json
 {
@@ -28,7 +28,7 @@ Agent 从公共 PRD／相关规格与用户指令拆解当前子任务，再调�
     "key": "api-probe"
   },
   "plan": {
-    "goal": "完成已确认的能力查询子任务",
+    "goal": "完成已确认的能力查询任务",
     "scope": ["src", "tests"],
     "sources": ["docs/api.md"],
     "authorization": "填入当前用户实际给出的实施范围",
@@ -42,7 +42,7 @@ Agent 从公共 PRD／相关规格与用户指令拆解当前子任务，再调�
 
 返回 created、revision、task 摘要及 assessment。首次自动建立本工作区的 member.json；本地成员标签由真实工作区路径摘要生成，不代表人员认证。已有成员标签沿用，错误归属或复制到其他位置的目录仍拒绝；每人在自己的 checkout/worktree 操作。
 
-requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；文档必须是实际公共 Markdown，章节语义及子任务是否重复由 Agent 判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
+requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；文档必须是实际公共 Markdown，章节语义及任务是否重复由 Agent 判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
 
 plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance、nextAction 和 stopCondition 来自真实任务。scope 是允许写入的文件／目录；inputs 默认 package.json 与 harness.config.json，再补实际依赖；sources 只登记实际遵循的需求子文档，requirement.source 自动参与文件摘要。method 为 automated／review／behavior。其余字段由生成器提供，按需填 decisions、dependencies、blockers 与 sharedRef，不复制整套空模板。示例不授予业务修改权限，脚本也不能认证授权文本的来源。
 

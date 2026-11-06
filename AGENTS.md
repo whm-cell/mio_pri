@@ -4,8 +4,8 @@
 
 ## 团队任务协调
 
-- 用户用自然语言给出目标、决定和反馈；当前 Agent 负责从公共 PRD／相关规格拆解当前子任务，并自动维护每位成员自己 checkout/worktree 中忽略的 `.work/`，不要求用户执行命令、命名目录或编辑记录。此职责不依赖个人 Skills。
-- Agent 新任务先取 `pnpm work guide start`，用结构化 `ensure --stdin` 自动初始化／复用记录；中断后先用 `status` 找到原子任务，再取 `context <task> resume`。事实变化时用带 revision 的 `update --stdin` 更新同一记录。后续只展开当前动作，不默认通读操作手册、历史或日志；入口见 [协调协议](docs/coordination.md)。
+- 用户用自然语言给出目标、决定和反馈；当前 Agent 按仓库协议从当前公共 PRD／规格形成执行任务，判断 C0/C1 与下一步，并维护本人 checkout/worktree 中忽略的 `.work/`。用户无需指定 Skills、执行命令、命名目录或编辑记录。
+- Agent 收到新目标先取 `pnpm work guide start`，按其中的拆解与生命周期说明选择任务，再用 `ensure --stdin` 初始化／复用记录；中断后先用 `status` 找到原任务，再取 `context <task> resume`。事实变化用带 revision 的 `update --stdin` 更新。仅展开当前动作；[协调协议](docs/coordination.md)和仓库命令可独立使用，不要求个人 Skills。
 - Agent 执行前用 `work check` 核对现场；契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。团队需求、设计草案与跨人交接放团队可访问的来源；个人过程留在 `.work`。单任务只设一个写入者；代码写入冲突时隔离工作区。
 - 任务交付按 [任务索引](docs/tasks/index.md) 渐进查找；最终报告通过 deliver prepare/complete 生成，真实接受后才进入 complete。重开保留旧报告并更新索引，不继承新候选通过。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。

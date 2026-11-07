@@ -240,10 +240,15 @@ async function main() {
     )
       throw new Error('WORK_QUALITY_EVIDENCE: declared result disagrees with review dimensions');
     if (criterion.id === normsCriterion.id) {
-      const issues = await normsIssues(root, task.plan);
+      const issues = await normsIssues(root, task.plan, true);
       if (issues.length) throw new Error(issues.join('\n'));
       if (
-        normsReviewResult(bytes.toString('utf8'), task.plan, await capture(root, task)) !== args[2]
+        (await normsReviewResult(
+          root,
+          bytes.toString('utf8'),
+          task.plan,
+          await capture(root, task),
+        )) !== args[2]
       )
         throw new Error('WORK_NORMS_EVIDENCE: declared result disagrees with normative review');
     }

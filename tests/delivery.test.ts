@@ -8,7 +8,12 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { assess, capture } from '../scripts/harness/work/context.ts';
 import { deliver, markdown } from '../scripts/harness/work/delivery.ts';
-import { loadOperation, operationPath } from '../scripts/harness/work/delivery-store.ts';
+import {
+  commitDelivery,
+  loadOperation,
+  operationPath,
+  requestDigest,
+} from '../scripts/harness/work/delivery-store.ts';
 import { handoff, receive } from '../scripts/harness/work/handoff.ts';
 import { updateTask } from '../scripts/harness/work/manage.ts';
 import {
@@ -22,10 +27,12 @@ import {
   readIndex,
   resultPath,
   renderResultPage,
+  renderDraft,
   renderBook,
   renderIndex,
   reportPath,
 } from '../scripts/harness/work/reports.ts';
+import type { PublicResult } from '../scripts/harness/work/reports.ts';
 import {
   historicalPath,
   legacyFiles,
@@ -43,6 +50,7 @@ import {
 } from '../scripts/harness/work/records.ts';
 import { checkDocuments } from '../scripts/harness/check-documents.ts';
 import { inventory, loadConfig } from '../scripts/harness/inventory.ts';
+import { documentCatalog, resolveDocument } from '../scripts/harness/task-documents.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 
 const project = resolve('.');
@@ -117,7 +125,11 @@ async function setup(root: string, id = 'probe', key: string | null = id, source
   });
   if (key !== null) {
     task.plan.result = { prd: source, key };
-    task.plan.norms = { paths: ['docs/api.md'], reason: 'Fixture capability preserves this API.' };
+    task.plan.norms = {
+      version: 2,
+      paths: ['docs/api.md'],
+      reason: 'Fixture capability preserves this API.',
+    };
     task.plan.acceptance.push({
       id: 'norms-review',
       method: 'review',
@@ -160,13 +172,43 @@ async function passing(root: string, id = 'probe') {
     environment: 'isolated fixture',
   });
   if (task.plan.norms) {
+    const sourcePath = task.plan.result
+      ? resolveDocument(task.plan.result.prd, await documentCatalog(root)).currentPath
+      : undefined;
     const report = `# Fixture norms review\n\n\`\`\`mio-norms-review\n${json({
       candidate: task.checkpoint.candidate,
       reviewer: 'isolated fixture reviewer',
       reason: task.plan.norms.reason,
+      ...(task.plan.norms.version === 2
+        ? {
+            version: 2,
+            requirements: {
+              result: 'pass',
+              assessment:
+                'Fixture PRD is the declared capability source; there is no separate design.',
+              documents: sourcePath
+                ? [
+                    {
+                      path: sourcePath,
+                      sha256: task.checkpoint!.files[sourcePath],
+                      assessment: 'Synthetic fixture capability covers this PRD.',
+                    },
+                  ]
+                : [],
+            },
+            accepted: {
+              result: 'pass',
+              assessment:
+                'Synthetic fixture observations only; existing accepted candidates are not reinterpreted.',
+              results: [],
+            },
+            remaining: 'No remaining fixture decisions; real acceptance is separate.',
+          }
+        : {}),
       documents: task.plan.norms.paths.map((path) => ({
         path,
         sha256: task.checkpoint!.files[path],
+        ...(task.plan.norms!.version === 2 ? { result: 'pass' } : {}),
         assessment: 'Fixture API and behavior agree.',
       })),
       conclusion: { result: 'pass', evidence: 'Synthetic fixture observation, not a real review.' },
@@ -227,6 +269,98 @@ async function finish(root: string, id = 'probe') {
   await deliver(root, id, json(request));
   return request;
 }
+
+/** Build a valid pre-v2-norms journal through the existing store, without bypassing new-write gates in deliver. */
+async function legacyNormsOperation(root: string, kind: 'prepare' | 'complete') {
+  await setup(root);
+  let loaded = await loadTask(root, 'probe');
+  delete loaded.task.plan.norms!.version;
+  await saveTask(root, loaded.task, loaded.raw);
+  await passing(root);
+  loaded = await loadTask(root, 'probe');
+  const task = loaded.task;
+  const prepared = await prepareRequest(root);
+  const outputs: Record<string, string> = {};
+  const attachments: Record<string, string> = {};
+  const shared = [];
+  for (const criterion of task.plan.acceptance) {
+    const entry = task.evidence
+      .filter(
+        (value) =>
+          value.criterion === criterion.id && value.candidate === task.checkpoint!.candidate,
+      )
+      .at(-1)!;
+    const text = await readFile(join(root, entry.artifact), 'utf8');
+    const path = `${evidenceRoot(task.plan.result!)}/${criterion.id}.md`;
+    outputs[`.work/tasks/probe/delivery/evidence/${criterion.id}.md`] = text;
+    attachments[path] = text;
+    shared.push({
+      criterion: criterion.id,
+      method: entry.method,
+      representation: 'original' as const,
+      sourceSha256: entry.sha256,
+      path,
+      sha256: digest(text),
+      environment: entry.environment,
+    });
+  }
+  const { candidate, head, files, contract } = task.checkpoint!;
+  const result: PublicResult = {
+    key: 'probe',
+    title: prepared.title,
+    modules: prepared.modules,
+    outcomes: prepared.outcomes,
+    decisions: prepared.decisions,
+    limitations: prepared.limitations,
+    version: { candidate, head, files, contract },
+    criteria: task.plan.acceptance,
+    evidence: shared,
+  };
+  const source = await markdown(renderDraft({ version: 2, prd, result }));
+  const path = '.work/tasks/probe/delivery/draft.md';
+  outputs[path] = source;
+  task.delivery!.draft = { path, sha256: digest(source), candidate };
+  task.releaseDisposition = 'HOLD_FOR_HUMAN_REVIEW';
+  await commitDelivery(root, task, loaded.raw, requestDigest(prepared), 'prepare', outputs, {});
+  if (kind === 'prepare') return prepared;
+  const request = await completeRequest(root);
+  loaded = await loadTask(root, 'probe');
+  result.acceptance = request.acceptance;
+  const detail = resultPath(task.plan.result!);
+  const details = { [detail]: await markdown(renderResultPage(prd, result)) };
+  const book = await markdown(renderBook({ version: 3, prd, results: [result] }, details));
+  const publicOutputs = {
+    ...attachments,
+    ...details,
+    [reportPath(prd)]: book,
+    [indexPath]: await markdown(
+      renderIndex({
+        version: 2,
+        prds: [{ prd, report: { path: reportPath(prd), sha256: digest(book) } }],
+      }),
+    ),
+  };
+  loaded.task.delivery!.accepted = {
+    path: reportPath(prd),
+    key: 'probe',
+    sha256: digest(json(result)),
+    candidate,
+  };
+  loaded.task.stage = 'C1_RELEASED';
+  loaded.task.reviewDecision = 'ACCEPT';
+  loaded.task.releaseDisposition = 'RELEASED';
+  await commitDelivery(
+    root,
+    loaded.task,
+    loaded.raw,
+    requestDigest(request),
+    'complete',
+    publicOutputs,
+    {},
+  );
+  return request;
+}
+
 async function publicFiles(root: string) {
   const files = (await inventory(root, await loadConfig(root))).files;
   return Object.fromEntries(
@@ -288,7 +422,10 @@ it('prepares only private, usable evidence links and publishes a candidate-bound
   expect(JSON.parse(invoke(root, ['status']).stdout).tasks[0].assessment.readyForAcceptance).toBe(
     true,
   );
-  expect(await deliver(root, 'probe', json(request))).toMatchObject({ replayed: true });
+  expect(await deliver(root, 'probe', json(request))).toMatchObject({
+    replayed: true,
+    readyForAcceptance: true,
+  });
   const complete = await completeRequest(root);
   await expect(
     deliver(root, 'probe', json({ ...complete, acceptance: undefined })),
@@ -549,6 +686,7 @@ it.each([0, 1, 2, 3, 4, 5])(
     );
     const replay = invoke(root, ['deliver', 'probe', '--stdin'], request);
     expect(replay.status, replay.stderr).toBe(0);
+    expect(JSON.parse(replay.stdout).readyForAcceptance).toBe(true);
     expect((await loadOperation(root, 'probe'))!.operation.done).toBe(true);
     expect((await assess(root, (await loadTask(root, 'probe')).task)).readyForAcceptance).toBe(
       true,
@@ -992,6 +1130,70 @@ it('blocks missing norms and stale norm originals without promoting or editing n
   const norms = loaded.task.evidence.filter((item) => item.criterion === 'norms-review');
   expect(new Set(norms.map((item) => item.candidate)).size).toBeGreaterThan(1);
 });
+
+it.each([
+  ['prepare', false],
+  ['prepare', true],
+  ['complete', false],
+  ['complete', true],
+] as const)(
+  'keeps legacy norms %s replay compatible with interrupted=%s while gating new requests',
+  async (kind, interrupted) => {
+    const root = await fixture();
+    const request = await legacyNormsOperation(root, kind);
+    const { operation } = (await loadOperation(root, 'probe'))!;
+    const candidate = (await loadTask(root, 'probe')).task.checkpoint!.candidate;
+    if (interrupted) {
+      operation.done = false;
+      for (const change of operation.changes.slice(2)) {
+        if (change.before === null) await rm(join(root, change.path), { force: true });
+        else await writeFile(join(root, change.path), change.before);
+      }
+      await writeFile(join(root, operationPath('probe')), json(operation));
+    }
+    const replay = invoke(root, ['deliver', 'probe', '--stdin'], request);
+    expect(replay.status, replay.stderr).toBe(0);
+    expect(JSON.parse(replay.stdout).replayed).toBe(true);
+    const current = await loadTask(root, 'probe');
+    expect(current.task.plan.norms?.version).toBeUndefined();
+    expect(current.task.checkpoint!.candidate).toBe(candidate);
+    for (const change of operation.changes)
+      expect(await readFile(join(root, change.path), 'utf8')).toBe(change.after);
+    if (kind === 'complete') {
+      const files = (await inventory(root, await loadConfig(root))).files;
+      expect(await checkReports(root, files)).toEqual([]);
+      expect((await results(root)).results[0]?.version.candidate).toBe(candidate);
+      expect((await assess(root, current.task)).normsReview.result).toBe('pass');
+    } else {
+      const assessment = await assess(root, current.task);
+      expect(JSON.parse(replay.stdout).readyForAcceptance).toBe(false);
+      expect(assessment.readyForAcceptance).toBe(false);
+      expect(assessment.normsReview.result).toBe('pass');
+      expect(assessment.normsReview.issues.join()).toContain('plan.norms.version 2');
+    }
+    await expect(prepare(root)).rejects.toThrow('plan.norms.version 2');
+    await expect(deliver(root, 'probe', json(await completeRequest(root)))).rejects.toThrow(
+      'plan.norms.version 2',
+    );
+    expect((await loadTask(root, 'probe')).raw).toBe(current.raw);
+    const acceptedBytes = await publicFiles(root);
+    await updateTask(
+      root,
+      'probe',
+      json({
+        revision: digest(current.raw),
+        reason: 'Explicitly upgrade this active fixture before a new delivery.',
+        plan: { norms: current.task.plan.norms },
+      }),
+    );
+    await passing(root);
+    await prepare(root);
+    expect((await assess(root, (await loadTask(root, 'probe')).task)).readyForAcceptance).toBe(
+      true,
+    );
+    expect(await publicFiles(root)).toEqual(acceptedBytes);
+  },
+);
 
 const oldIndexBody = (source: string) =>
   source.replace(

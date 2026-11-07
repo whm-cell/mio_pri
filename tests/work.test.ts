@@ -514,6 +514,32 @@ it.each(['start', 'resume', 'implement', 'verify', 'deliver', 'handoff', 'archiv
   },
 );
 
+it.each(['verify', 'deliver', 'handoff', 'archive'])(
+  'exposes the same handback reconciliation through guide and current task context for %s',
+  async (action) => {
+    const root = await fixture();
+    await ready(root);
+    for (const args of [
+      ['guide', action],
+      ['context', 'probe', action],
+    ]) {
+      const result = invoke(root, args);
+      expect(result.status, result.output).toBe(0);
+      const body = JSON.parse(result.output)
+        .reading.map((entry: { body: string }) => entry.body)
+        .join('\n');
+      expect(body).toContain('需求与方案');
+      expect(body).toContain('现行规范');
+      expect(body).toContain('已接受成果');
+      expect(body).toContain('取消、暂缓或未完成交接保留缺口');
+      expect(body).toContain('不是实时成果镜像');
+      expect(body).toContain('修正对应权威页后重验');
+      expect(body).toContain('不能把待接受标成已接受');
+      if (action !== 'deliver') expect(body).not.toContain('## 交付命令');
+    }
+  },
+);
+
 it('preserves current decision authority and blocking reasons in progressive summaries', async () => {
   const root = await fixture();
   await ready(root);

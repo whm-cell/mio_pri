@@ -4,7 +4,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-tools';
 import z from '@deepseek-ai/schemastery';
 import { createHandler } from './http.ts';
-import { readAuthConfig } from './auth/config.ts';
+import { AUTH_BASE_PATH, readAuthConfig } from './auth/config.ts';
 import { createAuthentication } from './auth/service.ts';
 import { createAuthHandler } from './auth/http.ts';
 
@@ -47,7 +47,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ctx.effect(() =>
       ctx.webServer.register({
         kind: 'prefix',
-        path: '/api/auth',
+        path: AUTH_BASE_PATH,
         handler: authHandler,
       }),
     );

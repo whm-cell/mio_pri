@@ -98,6 +98,141 @@ afterAll(async () => {
   }
 }, 30000);
 
+it('preserves auth wrapper responses, preflights and Origin precedence through the registered entry', async () => {
+  const clientId = '11111111-1111-4111-8111-111111111111';
+  const ids = new Set<string>();
+  for (const scenario of [
+    { path: '/api/v1/me', status: 401, code: 'UNAUTHORIZED' },
+    { path: '/api/auth/missing', method: 'OPTIONS', status: 404, code: 'NOT_FOUND' },
+    { path: '/api/auth/sign-in/email', method: 'OPTIONS', status: 403, code: 'ORIGIN_REQUIRED' },
+    { path: '/api/auth/sign-in/email', method: 'POST', status: 403, code: 'ORIGIN_REQUIRED' },
+    {
+      path: '/api/auth/sign-in/email',
+      method: 'GET',
+      origin: 'http://localhost:5173',
+      status: 405,
+      code: 'METHOD_NOT_ALLOWED',
+    },
+    {
+      path: '/api/auth/sign-in/email',
+      method: 'POST',
+      origin: 'http://localhost:5173',
+      status: 415,
+      code: 'JSON_REQUIRED',
+    },
+    {
+      path: '/api/auth/missing',
+      method: 'OPTIONS',
+      origin: 'https://evil.example',
+      status: 403,
+      code: 'ORIGIN_DENIED',
+    },
+    {
+      path: '/api/auth/sign-in/email',
+      method: 'GET',
+      origin: 'https://evil.example',
+      status: 403,
+      code: 'ORIGIN_DENIED',
+    },
+    {
+      path: '/api/auth/sign-in/email',
+      method: 'OPTIONS',
+      origin: 'http://localhost:5173',
+      status: 204,
+    },
+    { path: '/api/v1/me', method: 'OPTIONS', origin: 'http://localhost:5173', status: 204 },
+  ]) {
+    const response = await fetch(`${origin}${scenario.path}`, {
+      method: scenario.method ?? 'GET',
+      headers: {
+        'x-request-id': clientId,
+        ...(scenario.origin ? { origin: scenario.origin } : {}),
+      },
+    });
+    expect(response.status, scenario.path).toBe(scenario.status);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    const id = response.headers.get('x-request-id')!;
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(id).not.toBe(clientId);
+    expect(ids.has(id)).toBe(false);
+    ids.add(id);
+    if (scenario.origin === 'http://localhost:5173') {
+      expect(response.headers.get('access-control-allow-origin')).toBe(scenario.origin);
+      expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+      expect(response.headers.get('vary')).toBe('Origin');
+    } else {
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      expect(response.headers.get('access-control-allow-credentials')).toBeNull();
+    }
+    if (scenario.status === 204) {
+      expect(response.headers.get('content-type')).toBeNull();
+      expect(await response.text()).toBe('');
+      expect(response.headers.get('access-control-allow-methods')).toBe(
+        scenario.path === '/api/v1/me' ? 'GET, OPTIONS' : 'POST, OPTIONS',
+      );
+      expect(response.headers.get('access-control-allow-headers')).toBe('Content-Type');
+    } else {
+      expect(response.headers.get('content-type')).toBe('application/json');
+      expect(await response.json()).toEqual({
+        error: { code: scenario.code, message: scenario.code, requestId: id },
+      });
+    }
+    if (scenario.status === 405) expect(response.headers.get('allow')).toBe('POST, OPTIONS');
+  }
+  const empty = await call('/api/auth/get-session');
+  expect(empty.status).toBe(200);
+  expect(empty.headers.get('cache-control')).toBe('no-store');
+  expect(empty.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(await empty.json()).toBeNull();
+});
+
+it('forwards controlled upstream bytes, status and separate cookies without applying the wrapper error format', async () => {
+  await plugin.dispose();
+  const raw = '{ "code": "UPSTREAM_FIXTURE", "message": "preserve bytes" }\n';
+  const cookieList = ['first=one; Path=/; HttpOnly', 'second=two; Path=/; SameSite=Lax'];
+  const create = AuthenticationService.createAuthentication;
+  const factory = vi
+    .spyOn(AuthenticationService, 'createAuthentication')
+    .mockImplementation(async (config) => {
+      const auth = await create(config);
+      return {
+        ...auth,
+        handler: async () => {
+          const headers = new Headers({
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'public, max-age=3600',
+            'retry-after': '13',
+            'x-upstream-fixture': 'preserved',
+          });
+          for (const cookie of cookieList) headers.append('set-cookie', cookie);
+          return new Response(raw, { status: 429, headers });
+        },
+      };
+    });
+  try {
+    plugin = ctx.plugin(Mio, { tokenEnv: 'MIO_AUTH_TEST_TOKEN', allowedOrigins: [] });
+    await plugin;
+    const response = await call('/api/auth/sign-in/email', { email, password });
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe(raw);
+    expect(response.headers.getSetCookie()).toEqual(cookieList);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
+    expect(response.headers.get('retry-after')).toBe('13');
+    expect(response.headers.get('x-upstream-fixture')).toBe('preserved');
+    expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+    expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+  } finally {
+    await plugin.dispose();
+    factory.mockRestore();
+    plugin = ctx.plugin(Mio, { tokenEnv: 'MIO_AUTH_TEST_TOKEN', allowedOrigins: [] });
+    await plugin;
+  }
+});
+
 it('registers and logs in through DSH; persists credentials and isolates service tokens from user identity', async () => {
   expect((await call('/api/v1/me')).status).toBe(401);
   expect(
@@ -133,9 +268,18 @@ it('registers and logs in through DSH; persists credentials and isolates service
   const stored = await pool.query('SELECT password FROM account');
   expect(stored.rows[0].password).not.toBe(password);
   expect(stored.rows[0].password.length).toBeGreaterThan(32);
-  expect(
-    (await call('/api/auth/sign-in/email', { email, password: 'wrong-password-123' })).status,
-  ).toBe(401);
+  const wrongPassword = await call('/api/auth/sign-in/email', {
+    email,
+    password: 'wrong-password-123',
+  });
+  expect(wrongPassword.status).toBe(401);
+  expect(wrongPassword.headers.get('content-type')).toBe('application/json');
+  expect(wrongPassword.headers.get('cache-control')).toBe('no-store');
+  expect(wrongPassword.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(await wrongPassword.json()).toEqual({
+    code: 'INVALID_EMAIL_OR_PASSWORD',
+    message: 'Invalid email or password',
+  });
   const other = await session();
   await plugin.dispose();
   expect((await call('/api/v1/me', undefined, cookie)).status).toBe(404);
@@ -264,6 +408,10 @@ it('rejects foreign/missing origins, unsupported routes/methods and oversized ch
     ).toBe(401);
   const throttled = await call('/api/auth/sign-in/email', input);
   expect(throttled.status).toBe(429);
+  expect(throttled.headers.get('cache-control')).toBe('no-store');
+  expect(throttled.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(throttled.headers.get('x-retry-after')).toMatch(/^\d+$/);
+  expect(await throttled.json()).toEqual({ message: 'Too many requests. Please try again later.' });
   expect(
     await pool.query('SELECT count(*)::int AS count FROM "user"').then((r) => r.rows[0].count),
   ).toBe(1);

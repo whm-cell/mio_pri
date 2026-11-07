@@ -1,6 +1,8 @@
 import type { BetterAuthOptions } from 'better-auth';
 import type { Pool } from 'pg';
 
+export const AUTH_BASE_PATH = '/api/auth';
+
 export interface AuthConfig {
   baseURL: string;
   secret: string;
@@ -59,7 +61,7 @@ export function authOptions(config: AuthConfig, pool: Pool): BetterAuthOptions {
   return {
     appName: 'Mio',
     baseURL: config.baseURL,
-    basePath: '/api/auth',
+    basePath: AUTH_BASE_PATH,
     secret: config.secret,
     database: pool,
     trustedOrigins: [...config.origins],

@@ -10,7 +10,7 @@
 
 本域的 `MIO_ALLOWED_ORIGINS` 是精确 Origin 字符串的 JSON 数组，默认 `[]`。存在 Origin 请求头时必须匹配；无 Origin 的服务调用仍需 Bearer。CORS 不代替认证。允许的 OPTIONS 预检无须 Bearer，实际查询必须认证；只允许 GET 和 Authorization 请求头，不启用 Cookie 凭据。认证路由和 `/api/v1/me` 采用另行声明的 Origin/会话 cookie 契约。
 
-本域的已知路由不支持的方法返回 405，未知 mio API 返回 404，凭据缺失/不符返回 401，Origin 不允许返回 403。错误为 `{"error":{"code":"...","message":"...","requestId":"..."}}`；服务器生成的请求标识也在 `X-Request-Id` 中返回。不返回 token、异常栈或内部路径。所有响应禁止缓存。
+本域的已知路由不支持的方法返回 405，未知 mio API 返回 404，凭据缺失/不符返回 401，Origin 不允许返回 403。无效 Origin 先于路由、方法和凭据处理而拒绝；无 Origin 的已知 OPTIONS 仍可返回 204，未知 OPTIONS 为 404。错误为 `{"error":{"code":"...","message":"...","requestId":"..."}}`；服务器生成的请求标识也在 `X-Request-Id` 中返回，包装错误的头体标识一致。不返回 token、异常栈或内部路径。所有响应带 `Cache-Control: no-store`、`X-Content-Type-Options: nosniff` 与 `Content-Type: application/json; charset=utf-8`，包括无正文的 204 预检。共同实现入口见[运行时公共能力](index.md#运行时公共能力)。
 
 插件卸载后撤销自身路由与执行守卫；其他插件生命周期由 DSH 管理。部署只使用当前完整 Profile；不能把此插件加载到含任意工具或不受信任插件的通用 Web 配置后，仍宣称整实例具备相同隔离。
 

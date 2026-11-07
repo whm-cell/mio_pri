@@ -38,7 +38,13 @@ function fields(obj: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(obj).some((key) => !allowed.includes(key)))
     throw new Error('WORK_DELIVERY_REQUEST: unsupported field');
 }
-async function verified(root: string, task: Task, candidate?: string, publishing = false) {
+async function verified(
+  root: string,
+  task: Task,
+  candidate?: string,
+  publishing = false,
+  newWrite = true,
+) {
   if (publishing && (await optionalText(root, requirementsPath)) === null)
     throw new Error(
       `WORK_DELIVERY_NAVIGATION: create the real ${requirementsPath} navigation before publishing`,
@@ -50,7 +56,7 @@ async function verified(root: string, task: Task, candidate?: string, publishing
     throw new Error('WORK_RESULT: reconcile result.prd to its stable identity using work update');
   const assessment = await assess(root, task, false);
   if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
-  const normsErrors = await normsIssues(root, task.plan);
+  const normsErrors = await normsIssues(root, task.plan, newWrite);
   if (normsErrors.length) throw new Error(normsErrors.join('\n'));
   if (candidate !== undefined && assessment.candidate !== candidate)
     throw new Error('WORK_DELIVERY_STALE: candidate changed');
@@ -92,6 +98,7 @@ export async function deliver(root: string, id: string, rawRequest: string) {
         restored,
         restored.checkpoint!.candidate,
         operation.kind === 'complete' && !operation.done,
+        false,
       );
     })
   ) {
@@ -100,7 +107,7 @@ export async function deliver(root: string, id: string, rawRequest: string) {
       ? { completed: true, replayed: true, report: restored.delivery!.accepted }
       : {
           replayed: true,
-          readyForAcceptance: true,
+          readyForAcceptance: (await assess(root, restored)).readyForAcceptance,
           revision: digest(json(restored)),
           draft: restored.delivery!.draft,
         };

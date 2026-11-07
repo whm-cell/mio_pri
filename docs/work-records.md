@@ -138,32 +138,60 @@ evidence 只用于 review／behavior，登记本任务 evidence 目录的真实�
 pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/evidence/quality-review.md "实际审查进度与限制"
 ```
 
-`norms-review` 复用同一 evidence 命令。原件附一个 `mio-norms-review` 块，reason 与 plan.norms 一致，documents 对 paths 逐页保存当前候选文件摘要和实际观察。下面同样是未执行模板；无规范影响时 documents 为 []，结论依据仍需核对空 paths 的理由：
+`norms-review` 复用同一 evidence 命令，判断方法只在[交回前三方对账](coordination.md#交回与下一步)维护。新原件附一个 v2 `mio-norms-review` 块，reason 与 plan.norms 一致；requirements 保存实际需求／方案来源观察，documents 对 norms.paths 逐页绑定当前摘要，accepted 保存人工核对的相关成果与关系，remaining 说明未完成项、剩余决定和下一步。下面是未执行模板，须替换为真实观察，不能原样填 pass：
 
 ```json
 {
+  "version": 2,
   "candidate": "context 返回的当前候选",
   "reviewer": "实际审阅者",
   "reason": "与 plan.norms.reason 完全相同",
+  "requirements": {
+    "result": "pending",
+    "assessment": "尚未对照要求和方案采用状态；无独立设计时说明真实理由",
+    "documents": [
+      {
+        "path": "实际声明的需求或方案当前路径.md",
+        "sha256": "当前候选中该页的摘要",
+        "assessment": "尚未核对已完成、未完成及未采用范围"
+      }
+    ]
+  },
   "documents": [
     {
       "path": "docs/实际规范.md",
       "sha256": "当前候选中该页的摘要",
+      "result": "pending",
       "assessment": "实际覆盖、修改与未决核对"
     }
   ],
+  "accepted": {
+    "result": "pending",
+    "assessment": "尚未核对旧接受与本轮新能力或同 key 更新的关系；无相关成果时写真实理由",
+    "results": [
+      {
+        "prd": "实际公共PRD稳定身份.md",
+        "key": "actual-result-key",
+        "candidate": "该成果当时受验的候选摘要",
+        "assessment": "尚未核对接受范围与本轮关系"
+      }
+    ]
+  },
+  "remaining": "尚未核对未完成项、剩余决定和下一步",
   "conclusion": { "result": "pending", "evidence": "尚未逐页核对当前候选" },
   "limitations": "尚未执行"
 }
 ```
 
-将上述 JSON 放入标记为 `mio-norms-review` 的代码块后登记。结论只能是 pass/fail/pending；不匹配候选、页面摘要、声明或缺少观察拒绝登记。命令不证明观察已发生或规范语义充分。
+requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 中已注册的 prd/design/proposal 实际页，去重后用 currentPath，而非迁移 alias；不能靠原件添加未声明来源。没有任务资料注册的旧仓库／fixture，sources 中除 norms.paths、已知导航和成果存档外的声明页也按来源核对。维护规范章节可同时作为需求来源，其余普通规范和纯导航不重复填写。requirements.assessment 要说明要求及方案关系；无独立设计不需造文件。无规范影响时 documents 为 []，仍核对 reason；无相关接受时 accepted.results 为 []，assessment 写真实理由，不虚构成果。
+
+需求、各规范页和 accepted 的 result 只能是 pass/fail/pending，总体按 fail 优先、其次 pending、全部通过才 pass 推导，并须与 conclusion 及 evidence 命令参数相同。缺三方项、缺来源／规范页、不匹配候选、声明或页面摘要、空观察均拒绝。accepted 中 PRD/key/候选仅检查结构，不认证成果存在或接受真实；实际依赖另用 inputs 绑定，不能把原件当作实时镜像。旧声明和原件读取兼容；新登记必须先显式 update norms 到 v2、核对变化并 sync，旧通过不转移。
 
 当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
 
 ## 交付命令
 
-开发成果先用 ensure/update 明确 `plan.norms={"paths":["docs/实际规范.md"],"reason":"实际影响与核对理由"}`。没有规范影响可显式用空 paths，仍须说明理由并登记人工 norms-review。仅当前规范、必要 README/AGENTS 可列入；任务方案、迁移跳转与接受存档不算规范。必要正文在 verify 前更新并纳入候选，prepare/complete 不负责修改或采纳正文；旧记录缺声明需显式 update，读取不迁移。
+开发成果先用 ensure/update 明确 `plan.norms={"version":2,"paths":["docs/实际规范.md"],"reason":"实际影响与核对理由"}`；维护可单独声明 norms 启用同一审查，无需 result。新 ensure 或显式更新 norms 默认写入 version:2；旧声明不会因读取或更新无关字段而升级。没有规范影响可显式用空 paths，仍须说明理由并登记人工 norms-review。仅当前规范、必要 README/AGENTS 可列入；任务方案、迁移跳转与接受存档不算规范。必要正文在 verify 前更新并纳入候选，prepare/complete 不负责修改或采纳正文。新的 prepare/complete 写入缺 v2 声明或当前原件时拒绝并引导 update；旧已完成／未完成 journal 重放按原契约及原恢复保护，不隐式升级。
 
 `pnpm work deliver <task> --stdin` 只用于明确的 PRD 开发成果，由 Agent 执行。建档或带 revision 的 update 中设置 `plan.result={"prd":"实际公共 PRD.md","key":"稳定成果键"}`；prd 必须是存在的公共 Markdown，key 用与任务 ID 相同的字符规则。Agent 判断它是否对应真实可验收能力，工具不从文件名、scope 或流程标签推断。未设置 result 的维护、检查和演练只保留个人记录，核对后 archive；prepare／complete 均拒绝公共写入。
 
@@ -240,22 +268,22 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 仅在创建／调整格式或排查字段时读取本节。version=1；新入口保持旧任务兼容。损坏 JSON、未知版本、重复验收 ID、未知方法或状态返回非零，不自动迁移或覆盖原件。
 
-| 字段                                                | 含义                                                                                                          |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| member／workspace／plan.id                          | 本人成员、真实工作区、任务目录绑定；成员只是本地标签                                                          |
-| plan.requirement（可选）                            | `{source,section,key}`；公共 PRD／规格章节与个人拆解项关联；新任务由此生成稳定 ID，旧记录无需迁移             |
-| plan.result（可选）                                 | `{prd,key}`；明确开发能力的公共 PRD 与稳定成果键；缺省为未声明公共成果，仅维护个人记录、不自动发布            |
-| plan.norms（开发成果交付必需）                      | `{paths,reason}`；实际现行规范和影响理由，空 paths 表示明确无影响；norms-review 原件绑定候选及逐页摘要        |
-| plan.goal／scope／inputs／sources                   | 目标、写入范围、所读代码／配置、相关需求文件                                                                  |
-| plan.authorization／nonGoals                        | 真实授权与非目标                                                                                              |
-| plan.acceptance                                     | ID、可观察判据、automated／review／behavior                                                                   |
-| plan.decisions                                      | `{status,text,source}`；CONFIRMED／AI_PROPOSED／OPEN／REJECTED，OPEN 仅列影响当前动作的取舍                   |
-| plan.dependencies                                   | `{task,ref,ready}`；ref 为团队可访问的来源，ready 由执行者实际核对                                            |
-| plan.blockers／nextAction／stopCondition／sharedRef | 当前阻塞、下一步、停止条件、同一共享权威来源                                                                  |
-| stage／reviewDecision／releaseDisposition           | 当前切片状态、人类 PENDING／ACCEPT／REQUEST_CHANGES／HOLD、HOLD_FOR_EVIDENCE／HOLD_FOR_HUMAN_REVIEW／RELEASED |
-| checkpoint                                          | HEAD、分支、所选文件哈希、契约哈希、候选标识                                                                  |
-| evidence                                            | 验收 ID、方法、pass／fail／pending、候选、原件路径／哈希、摘要和环境；历史追加                                |
-| notes／archived                                     | 对账说明与历史标记，不自动删除                                                                                |
+| 字段                                                | 含义                                                                                                                                   |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| member／workspace／plan.id                          | 本人成员、真实工作区、任务目录绑定；成员只是本地标签                                                                                   |
+| plan.requirement（可选）                            | `{source,section,key}`；公共 PRD／规格章节与个人拆解项关联；新任务由此生成稳定 ID，旧记录无需迁移                                      |
+| plan.result（可选）                                 | `{prd,key}`；明确开发能力的公共 PRD 与稳定成果键；缺省为未声明公共成果，仅维护个人记录、不自动发布                                     |
+| plan.norms（开发成果交付必需；维护可单独启用）      | `{version:2,paths,reason}`；实际现行规范和理由，空 paths 表示明确无影响；norms-review 绑定三方观察、候选及实际页面摘要；旧版本只读兼容 |
+| plan.goal／scope／inputs／sources                   | 目标、写入范围、所读代码／配置、相关需求文件                                                                                           |
+| plan.authorization／nonGoals                        | 真实授权与非目标                                                                                                                       |
+| plan.acceptance                                     | ID、可观察判据、automated／review／behavior                                                                                            |
+| plan.decisions                                      | `{status,text,source}`；CONFIRMED／AI_PROPOSED／OPEN／REJECTED，OPEN 仅列影响当前动作的取舍                                            |
+| plan.dependencies                                   | `{task,ref,ready}`；ref 为团队可访问的来源，ready 由执行者实际核对                                                                     |
+| plan.blockers／nextAction／stopCondition／sharedRef | 当前阻塞、下一步、停止条件、同一共享权威来源                                                                                           |
+| stage／reviewDecision／releaseDisposition           | 当前切片状态、人类 PENDING／ACCEPT／REQUEST_CHANGES／HOLD、HOLD_FOR_EVIDENCE／HOLD_FOR_HUMAN_REVIEW／RELEASED                          |
+| checkpoint                                          | HEAD、分支、所选文件哈希、契约哈希、候选标识                                                                                           |
+| evidence                                            | 验收 ID、方法、pass／fail／pending、候选、原件路径／哈希、摘要和环境；历史追加                                                         |
+| notes／archived                                     | 对账说明与历史标记，不自动删除                                                                                                         |
 
 固定策略文件 AGENTS.md、协调协议和本页仍完整参与摘要核对；不是默认阅读全文的清单。scope／inputs 的目录展开已分类文件，包含未提交与未跟踪内容；scope 可以有尚未创建的目标，sources／inputs 缺失则报错。绝对路径、..、符号链接、私有／凭证／生成目录不可作为公共输入。
 

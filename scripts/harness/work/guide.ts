@@ -18,14 +18,17 @@ const sections: Record<string, [string, string][]> = {
   ],
   verify: [
     ['docs/coordination.md', '验证与接受'],
+    ['docs/coordination.md', '交回与下一步'],
     ['docs/work-records.md', '记录证据'],
   ],
   handoff: [
     ['docs/coordination.md', '跨人交接'],
+    ['docs/coordination.md', '交回与下一步'],
     ['docs/work-records.md', '发送与接收'],
   ],
   archive: [
     ['docs/coordination.md', '归档与保留'],
+    ['docs/coordination.md', '交回与下一步'],
     ['docs/work-records.md', '归档命令'],
   ],
   deliver: [

@@ -54,6 +54,8 @@ export async function ensureTask(root: string, raw: string) {
   const request = fields(JSON.parse(raw), ['requirement', 'plan']);
   const requirement = fields(request.requirement, ['source', 'section', 'key']);
   const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
+  if (patch.norms && typeof patch.norms === 'object' && !Array.isArray(patch.norms))
+    patch.norms = { version: 2, ...patch.norms };
   const catalog = await documentCatalog(root);
   if (typeof requirement.source === 'string')
     requirement.source = resolveDocument(requirement.source, catalog).identity;
@@ -119,6 +121,8 @@ export async function updateTask(root: string, id: string, raw: string) {
   )
     throw new Error('WORK_REQUEST: revision and a reconciliation reason are required');
   const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
+  if (patch.norms && typeof patch.norms === 'object' && !Array.isArray(patch.norms))
+    patch.norms = { version: 2, ...patch.norms };
   if (patch.result && typeof patch.result === 'object') {
     const result = patch.result as Record<string, unknown>;
     if (typeof result.prd === 'string') {

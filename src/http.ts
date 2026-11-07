@@ -1,6 +1,7 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ApiError, Capabilities } from './contracts.ts';
+import type { Capabilities } from './contracts.ts';
+import { startHttpResponse, writeApiError } from './http-response.ts';
 
 export interface HttpOptions {
   token: string;
@@ -28,19 +29,20 @@ export function createHandler(options: HttpOptions) {
   const allowedOrigins = new Set(options.allowedOrigins);
 
   return (request: IncomingMessage, response: ServerResponse): void => {
-    const requestId = randomUUID();
+    const requestId = startHttpResponse(response);
     const send = (status: number, value: unknown): void => {
       response.writeHead(status, {
         'content-type': 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'x-request-id': requestId,
       });
       response.end(JSON.stringify(value));
     };
     const fail = (status: number, code: string, message: string): void => {
-      const value: ApiError = { error: { code, message, requestId } };
-      send(status, value);
+      writeApiError(
+        response,
+        status,
+        { code, message, requestId },
+        'application/json; charset=utf-8',
+      );
     };
     const origin = request.headers.origin;
     if (origin !== undefined && !allowedOrigins.has(origin)) {

@@ -34,8 +34,8 @@ pnpm start
 
 ## 职责与限制
 
-- `src/auth/config.ts` 统一配置，`service.ts` 持有认证库与 DB 池，`http.ts` 负责白名单、来源、正文上限和响应适配；`plugin.ts` 仅装配与释放。
-- `/api/v1/me` 是可信身份能力的实际消费者。未来项目服务用该身份另行判断资源归属；登录成功不等于能访问任意项目。项目 CRUD 尚未实现。
+- [认证配置](../src/auth/config.ts)的 `readAuthConfig` 与 `authOptions` 由装配、运行时和显式迁移按职责复用；`AUTH_BASE_PATH` 是库选项、插件前缀注册和认证 HTTP 路径截取的同一权威值。`service.ts` 持有认证库与 DB 池，`http.ts` 负责白名单、来源、私有的有界正文读取和响应适配；`plugin.ts` 仅装配与释放。两个 HTTP 适配器共用的响应头与包装错误入口见 [API 领域导航](apis/index.md#运行时公共能力)，库原始响应仍由认证适配器转发。
+- [认证服务](../src/auth/service.ts)的 `Authentication.identity(headers)` 返回经数据库验证的 `{userId,sessionId}` 或 `null`；`/api/v1/me` 是实际消费者，调用时禁止刷新会话。后续 HTTP 适配器由装配入口取得身份解析能力，把已验证主体传给应用服务；应用服务再判断资源归属，不依赖 Node HTTP、DSH 或认证驱动，也不信任请求体 userId 或服务 token。项目 CRUD 尚未实现。
 - 首期邮箱未验证，不能用于第三方账号联结、团队邀请信任或邮件找回。邮箱验证、邮件找回、MFA、团队与生成分别按后续契约接入；未开放的入口返回 404。
 - 数据库错误不向客户端暴露连接串或异常栈；密码、cookie、会话 token 和部署秘密不写入公共日志或报告。
 

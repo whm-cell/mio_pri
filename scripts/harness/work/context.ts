@@ -142,7 +142,11 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
   if (inspectDelivery && (await deliveryPending(root, task.plan.id)))
     errors.push('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
   const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
-  const normsErrors = await normsIssues(root, task.plan);
+  const normsErrors = await normsIssues(
+    root,
+    task.plan,
+    inspectDelivery && !!(task.plan.result || task.plan.norms) && task.stage !== 'C1_RELEASED',
+  );
   const quality = task.plan.acceptance.find((item) => item.id === qualityCriterion.id);
   if ((qualityRequired && !quality) || (quality && quality.method !== qualityCriterion.method))
     errors.push(
@@ -185,7 +189,10 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
           }
         } else if (criterion.id === normsCriterion.id) {
           try {
-            if (normsReviewResult(bytes.toString('utf8'), task.plan, current) !== entry.result)
+            if (
+              (await normsReviewResult(root, bytes.toString('utf8'), task.plan, current)) !==
+              entry.result
+            )
               result = 'invalid';
           } catch {
             result = 'invalid';
@@ -249,11 +256,11 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
         (qualityRequired ? 'unregistered' : 'not_required'),
     },
     normsReview: {
-      required: !!task.plan.result,
+      required: !!(task.plan.result || task.plan.norms),
       issues: normsErrors,
       result:
         evidence.find((item) => item.criterion === normsCriterion.id)?.result ??
-        (task.plan.result ? 'unregistered' : 'not_required'),
+        (task.plan.result || task.plan.norms ? 'unregistered' : 'not_required'),
     },
     nextAction: task.plan.nextAction,
   };

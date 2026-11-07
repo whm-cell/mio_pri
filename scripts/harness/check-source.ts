@@ -174,6 +174,16 @@ export async function checkSource(root: string, files: readonly string[], harnes
           errors.push(`IMPORT_UNRESOLVED ${file}: ${specifier}`);
       }
       if (!production) continue;
+      if (
+        file === 'src/http-response.ts' &&
+        !(
+          (!resolved && ['node:crypto', 'node:http'].includes(specifier)) ||
+          (target === 'src/contracts.ts' && !resolved?.isExternalLibraryImport)
+        )
+      )
+        errors.push(
+          `HTTP_RESPONSE_DEPENDENCY ${file}: ${specifier} is outside Node HTTP/UUID and contracts`,
+        );
       const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
       const authPackage = [specifier.split('/')[0], resolved?.packageId?.name, packageName].some(
         (name) =>

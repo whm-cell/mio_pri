@@ -399,6 +399,45 @@ it('allows only the explicit service migration config edge and isolates auth pac
   expect(check(root).output).toContain('AUTH_ADAPTER');
 });
 
+it('keeps response primitives independent through resolved type imports, aliases and re-exports', async () => {
+  const root = await fixture({
+    'src/contracts.ts': 'export interface ApiError { error: { code: string } }',
+    'src/auth/value.ts': 'export interface AuthValue { id: string }',
+    'src/plugin.ts': 'export const plugin = 1;',
+    'scripts/harness/tool.ts': 'export const tool = 1;',
+    'src/http-response.ts': `import { randomUUID } from 'node:crypto';
+import type { ServerResponse } from 'node:http';
+import type { ApiError } from './contracts.ts';
+export function start(response: ServerResponse): ApiError { return { error: { code: randomUUID() + response.statusCode } }; }`,
+  });
+  expect(check(root).status).toBe(0);
+  const configPath = join(root, 'tsconfig.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.compilerOptions.paths = {
+    '@contract': ['./src/contracts.ts'],
+    '@auth-value': ['./src/auth/value.ts'],
+  };
+  await writeFile(configPath, JSON.stringify(config));
+  const helper = join(root, 'src/http-response.ts');
+  await writeFile(helper, "export type { ApiError } from '@contract';");
+  expect(check(root).status).toBe(0);
+  for (const source of [
+    "import type { AuthValue } from './auth/value.ts'; export type Value = AuthValue;",
+    "export type { AuthValue } from './auth/value.ts';",
+    "import type { AuthValue } from '@auth-value'; export type Value = AuthValue;",
+    "export type Value = import('@auth-value').AuthValue;",
+    "export { plugin } from './plugin.ts';",
+    "export { Pool } from 'pg';",
+    "import '../scripts/harness/tool.ts';",
+    "export { URL } from 'node:url';",
+  ]) {
+    await writeFile(helper, source);
+    const result = check(root);
+    expect(result.status, source + result.output).toBe(1);
+    expect(result.output, source).toContain('HTTP_RESPONSE_DEPENDENCY src/http-response.ts');
+  }
+});
+
 it.each(['src/plugin.ts', 'src/auth/query.ts'])(
   'resolves database and authentication type aliases before checking the boundary in %s',
   async (file) => {

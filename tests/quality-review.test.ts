@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { digest } from '../scripts/harness/work/records.ts';
+import { capture } from '../scripts/harness/work/context.ts';
 import type { Task } from '../scripts/harness/work/records.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 import { normsIssues } from '../scripts/harness/work/norms-review.ts';
@@ -29,7 +30,7 @@ function cli(root: string, args: string[], input?: unknown) {
   return { status: result.status, output: `${result.stdout}\n${result.stderr}`.trim() };
 }
 
-async function fixture(scope = ['src']) {
+async function fixture(scope = ['src'], development = true) {
   const root = await mkdtemp(join(tmpdir(), 'mio-quality-'));
   scratch.push(root);
   for (const file of ['harness.config.json', 'docs/coordination.md', 'docs/work-records.md']) {
@@ -54,7 +55,7 @@ async function fixture(scope = ['src']) {
     requirement: { source: 'docs/api.md', section: 'API', key: 'quality' },
     plan: {
       goal: 'Change a fixture capability.',
-      result: { prd: 'docs/api.md', key: 'fixture-capability' },
+      ...(development ? { result: { prd: 'docs/api.md', key: 'fixture-capability' } } : {}),
       norms: { paths: [], reason: 'Fixture constant changes no public normative behavior.' },
       scope,
       inputs: ['src'],
@@ -72,6 +73,42 @@ async function fixture(scope = ['src']) {
   const context = () => JSON.parse(cli(root, ['context', id, 'verify']).output);
   return { root, id, path, state, context, request };
 }
+
+function normsFixture(task: Task, sources = ['docs/api.md']) {
+  return {
+    version: 2,
+    candidate: task.checkpoint!.candidate,
+    reviewer: 'fixture reviewer',
+    reason: task.plan.norms!.reason,
+    requirements: {
+      result: 'pass',
+      assessment: 'Synthetic requirement observation; the fixture has no separate adopted design.',
+      documents: sources.map((path) => ({
+        path,
+        sha256: task.checkpoint!.files[path],
+        assessment: 'Fixture requirement and source were inspected.',
+      })),
+    },
+    documents: task.plan.norms!.paths.map((path) => ({
+      path,
+      sha256: task.checkpoint!.files[path],
+      result: 'pass',
+      assessment: 'Synthetic normative observation.',
+    })),
+    accepted: {
+      result: 'pass',
+      assessment:
+        'Fixture has no related accepted result; this observation does not certify real acceptance.',
+      results: [] as { prd: string; key: string; candidate: string; assessment: string }[],
+    },
+    remaining: 'No remaining fixture decisions; verification and real acceptance are separate.',
+    conclusion: { result: 'pass', evidence: 'Synthetic protocol observation only.' },
+    limitations: 'Fixture only; no claim of real semantic review.',
+  };
+}
+
+const normsMarkdown = (value: unknown) =>
+  `\`\`\`mio-norms-review\n${JSON.stringify(value)}\n\`\`\`\n`;
 
 it.each(['src', 'scripts/harness', 'scripts/service', 'tests', '.', 'src/planned.ts'])(
   'registers a review for source scope %s, including planned source and ancestor directories',
@@ -218,22 +255,8 @@ it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and r
     'pending',
     'pass',
   ]);
-  const norms = (await f.state()).plan.norms!;
   const normsPath = `.work/tasks/${f.id}/evidence/norms.md`;
-  await writeFile(
-    join(f.root, normsPath),
-    `\`\`\`mio-norms-review\n${JSON.stringify({
-      candidate,
-      reviewer: 'fixture reviewer',
-      reason: norms.reason,
-      documents: [],
-      conclusion: {
-        result: 'pass',
-        evidence: 'Synthetic fixture has no affected normative behavior.',
-      },
-      limitations: 'Fixture only.',
-    })}\n\`\`\`\n`,
-  );
+  await writeFile(join(f.root, normsPath), normsMarkdown(normsFixture(await f.state())));
   expect(
     cli(f.root, ['evidence', f.id, 'norms-review', 'pass', normsPath, 'Fixture norm review.'])
       .status,
@@ -293,27 +316,10 @@ it('requires actual candidate-bound normative page observations and rejects old 
     cli(f.root, ['run', f.id, 'checks', '--', process.execPath, '-e', 'console.log(1)']).status,
   ).toBe(0);
   const task = await f.state();
-  const current = task.checkpoint!;
-  const report = {
-    candidate: current.candidate,
-    reviewer: 'fixture reviewer',
-    reason: task.plan.norms!.reason,
-    documents: [
-      {
-        path: 'docs/api.md',
-        sha256: current.files['docs/api.md'],
-        assessment: 'Synthetic API agrees with the tested fixture result.',
-      },
-    ],
-    conclusion: { result: 'pass', evidence: 'Synthetic page observation, protocol test only.' },
-    limitations: 'No claim of real semantic review.',
-  };
+  const report = normsFixture(task);
   const path = `.work/tasks/${f.id}/evidence/norms-page.md`;
   const submit = async (value: unknown) => {
-    await writeFile(
-      join(f.root, path),
-      `\`\`\`mio-norms-review\n${JSON.stringify(value)}\n\`\`\`\n`,
-    );
+    await writeFile(join(f.root, path), normsMarkdown(value));
     return cli(f.root, [
       'evidence',
       f.id,
@@ -396,4 +402,273 @@ it('allows only current normative pages and an explicitly justified empty set', 
       norms: { paths: [], reason: 'Fixture implementation has no normative impact.' },
     }),
   ).toEqual([]);
+});
+
+it('enables reconciliation for maintenance without inventing a development result or blocking cancellation', async () => {
+  const f = await fixture(['docs/api.md'], false);
+  const task = await f.state();
+  expect(task.plan.result).toBeUndefined();
+  expect(task.delivery).toBeUndefined();
+  expect(task.plan.norms?.version).toBe(2);
+  expect(f.context().assessment.normsReview).toMatchObject({ required: true, result: 'pending' });
+  const path = `.work/tasks/${f.id}/evidence/maintenance.md`;
+  await mkdir(dirname(join(f.root, path)), { recursive: true });
+  await writeFile(join(f.root, path), normsMarkdown(normsFixture(task)));
+  const observed = cli(f.root, [
+    'evidence',
+    f.id,
+    'norms-review',
+    'pass',
+    path,
+    'Synthetic maintenance reconciliation.',
+  ]);
+  expect(observed.status, observed.output).toBe(0);
+  expect(f.context().assessment.normsReview.result).toBe('pass');
+  expect(
+    cli(f.root, ['deliver', f.id, '--stdin'], { action: 'prepare', revision: f.context().revision })
+      .output,
+  ).toContain('WORK_DELIVERY_RESULT');
+  const cancelled = await fixture(['docs/api.md'], false);
+  expect(
+    cli(cancelled.root, [
+      'archive',
+      cancelled.id,
+      'Fixture user pauses this unfinished maintenance; checks and reconciliation remain pending.',
+    ]).status,
+  ).toBe(0);
+  expect((await cancelled.state()).evidence).toEqual([]);
+  expect((await cancelled.state()).archived).toBe(true);
+});
+
+it('checks declared requirement and design current pages without duplicating ordinary norms or trusting report-only sources', async () => {
+  const f = await fixture(['docs'], false);
+  const taskRoot = 'docs/tasks/example';
+  const prd = `${taskRoot}/prd.md`;
+  const design = `${taskRoot}/design.md`;
+  const proposal = `${taskRoot}/proposal.md`;
+  const alias = 'docs/old-prd.md';
+  await mkdir(join(f.root, taskRoot), { recursive: true });
+  for (const path of [prd, design, proposal, 'docs/norm.md', 'docs/unlisted.md', 'docs/index.md'])
+    await writeFile(join(f.root, path), `# Fixture ${path}\n`);
+  await writeFile(join(f.root, alias), '# 资料已迁移\n\n[当前资料](tasks/example/prd.md)\n');
+  const configPath = join(f.root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = [
+    { identity: alias, kind: 'prd', path: prd, aliases: [alias] },
+    { identity: design, kind: 'design', path: design },
+    { identity: proposal, kind: 'proposal', path: proposal },
+  ];
+  await writeFile(configPath, JSON.stringify(config));
+  const updated = cli(f.root, ['update', f.id, '--stdin'], {
+    revision: f.context().revision,
+    reason: 'Declare the fixture requirement and unadopted design sources before reviewing them.',
+    plan: {
+      sources: [alias, design, proposal, 'docs/api.md', 'docs/norm.md', 'docs/index.md'],
+      norms: {
+        paths: ['docs/api.md', 'docs/norm.md'],
+        reason: 'Two actual normative pages; the API section is also the maintenance requirement.',
+      },
+    },
+  });
+  expect(updated.status, updated.output).toBe(0);
+  expect(
+    cli(f.root, ['sync', f.id, 'Inspected declared sources, normative pages and alias registry.'])
+      .status,
+  ).toBe(0);
+  const report = normsFixture(await f.state(), ['docs/api.md', prd, design, proposal]);
+  report.accepted.results = [
+    {
+      prd: alias,
+      key: 'prior-key',
+      candidate: 'a'.repeat(64),
+      assessment:
+        'Synthetic historical reference only; the CLI must not certify it as real acceptance.',
+    },
+  ];
+  const path = `.work/tasks/${f.id}/evidence/sources.md`;
+  await mkdir(dirname(join(f.root, path)), { recursive: true });
+  const submit = async (value: unknown) => {
+    await writeFile(join(f.root, path), normsMarkdown(value));
+    return cli(f.root, [
+      'evidence',
+      f.id,
+      'norms-review',
+      'pass',
+      path,
+      'Fixture declared-source observations.',
+    ]);
+  };
+  const documents = report.requirements.documents;
+  const current = (await f.state()).checkpoint!;
+  expect(
+    (
+      await submit({
+        ...report,
+        requirements: {
+          ...report.requirements,
+          documents: documents.filter((entry) => entry.path !== design),
+        },
+      })
+    ).status,
+  ).toBe(1);
+  for (const replacement of [alias, 'docs/unlisted.md', 'docs/norm.md', 'docs/index.md']) {
+    const changed = documents.map((entry) =>
+      entry.path === design
+        ? { ...entry, path: replacement, sha256: current.files[replacement] }
+        : entry,
+    );
+    expect(
+      (await submit({ ...report, requirements: { ...report.requirements, documents: changed } }))
+        .output,
+    ).toContain('hash/path mismatch');
+  }
+  expect((await submit(report)).status).toBe(0);
+  // The fixture has no book or index: accepted observations are structure, never a live mirror.
+  await expect(readFile(join(f.root, 'docs/tasks/index.md'))).rejects.toThrow();
+});
+
+it('rejects missing reconciliation dimensions, bad source binding and fail or pending observations labelled as all pass', async () => {
+  const f = await fixture(['docs/api.md']);
+  const update = cli(f.root, ['update', f.id, '--stdin'], {
+    revision: f.context().revision,
+    reason: 'Review the real affected API page in all three relationships.',
+    plan: { norms: { paths: ['docs/api.md'], reason: 'Fixture normative impact.' } },
+  });
+  expect(update.status, update.output).toBe(0);
+  expect(cli(f.root, ['sync', f.id, 'Inspected the v2 contract.']).status).toBe(0);
+  const report = normsFixture(await f.state());
+  const path = `.work/tasks/${f.id}/evidence/dimensions.md`;
+  await mkdir(dirname(join(f.root, path)), { recursive: true });
+  const submit = async (value: unknown, declared = 'pass') => {
+    await writeFile(join(f.root, path), normsMarkdown(value));
+    return cli(f.root, [
+      'evidence',
+      f.id,
+      'norms-review',
+      declared,
+      path,
+      'Synthetic three-way observations.',
+    ]);
+  };
+  for (const field of ['version', 'requirements', 'accepted', 'remaining', 'documents'])
+    expect((await submit({ ...report, [field]: undefined })).status).toBe(1);
+  for (const value of [
+    { ...report, requirements: { ...report.requirements, documents: [] } },
+    {
+      ...report,
+      requirements: {
+        ...report.requirements,
+        documents: [{ ...report.requirements.documents[0], sha256: 'a'.repeat(64) }],
+      },
+    },
+    { ...report, candidate: 'a'.repeat(64) },
+    { ...report, requirements: { ...report.requirements, result: 'pending' } },
+    { ...report, requirements: { ...report.requirements, result: ['fail'] } },
+    { ...report, accepted: { ...report.accepted, result: 'fail' } },
+    { ...report, accepted: { ...report.accepted, assessment: '' } },
+    { ...report, documents: [{ ...report.documents[0], result: 'pending' }] },
+    { ...report, documents: [{ ...report.documents[0], result: ['pass'] }] },
+    {
+      ...report,
+      accepted: {
+        ...report.accepted,
+        results: [
+          {
+            prd: 'docs/api.md',
+            key: 'old',
+            candidate: 'not-a-hash',
+            assessment: 'Invalid candidate.',
+          },
+        ],
+      },
+    },
+  ])
+    expect((await submit(value)).status).toBe(1);
+  const pending = {
+    ...report,
+    requirements: { ...report.requirements, result: 'pending' },
+    conclusion: {
+      result: 'pending',
+      evidence: 'Synthetic requirement coverage has not yet been established.',
+    },
+  };
+  expect((await submit(pending, 'pending')).status).toBe(0);
+  expect(f.context().assessment.normsReview.result).toBe('pending');
+  const failed = {
+    ...report,
+    accepted: { ...report.accepted, result: 'fail' },
+    conclusion: { result: 'fail', evidence: 'Synthetic accepted-state conflict needs resolution.' },
+  };
+  expect((await submit(failed, 'pass')).status).toBe(1);
+  const acceptedFailure = await submit(failed, 'fail');
+  expect(acceptedFailure.status, acceptedFailure.output).toBe(0);
+  expect(f.context().assessment.normsReview.result).toBe('fail');
+  // Bypass the registration entry only to show that later assessment does not trust a forged pass.
+  const task = await f.state();
+  task.evidence.at(-1)!.result = 'pass';
+  await writeFile(f.path, JSON.stringify(task));
+  expect(f.context().assessment.normsReview.result).toBe('invalid');
+});
+
+it('reads legacy originals without migration but requires an explicit v2 declaration for new evidence', async () => {
+  const f = await fixture(['docs/api.md'], false);
+  const task = await f.state();
+  delete task.plan.norms!.version;
+  task.checkpoint = await capture(f.root, task);
+  const path = `.work/tasks/${f.id}/evidence/legacy-norms.md`;
+  const report = normsMarkdown({
+    candidate: task.checkpoint.candidate,
+    reviewer: 'historical fixture reviewer',
+    reason: task.plan.norms!.reason,
+    documents: [],
+    conclusion: { result: 'pass', evidence: 'Original v1 observation retained as history.' },
+    limitations: 'No v2 reconciliation was claimed.',
+  });
+  await mkdir(dirname(join(f.root, path)), { recursive: true });
+  await writeFile(join(f.root, path), report);
+  task.evidence.push({
+    criterion: 'norms-review',
+    method: 'review',
+    result: 'pass',
+    candidate: task.checkpoint.candidate,
+    artifact: path,
+    sha256: digest(report),
+    summary: 'Historical fixture observation.',
+    environment: 'fixture',
+  });
+  await writeFile(f.path, JSON.stringify(task));
+  const original = await readFile(f.path, 'utf8');
+  expect(f.context().assessment.normsReview.result).toBe('pass');
+  expect(cli(f.root, ['status']).status).toBe(0);
+  expect(cli(f.root, ['ensure', '--stdin'], { requirement: f.request.requirement }).status).toBe(0);
+  expect(await readFile(f.path, 'utf8')).toBe(original);
+  expect(
+    cli(f.root, [
+      'evidence',
+      f.id,
+      'norms-review',
+      'pass',
+      path,
+      'Attempt a new legacy observation.',
+    ]).output,
+  ).toContain('plan.norms.version 2');
+  expect(await readFile(f.path, 'utf8')).toBe(original);
+  const progress = cli(f.root, ['update', f.id, '--stdin'], {
+    revision: f.context().revision,
+    reason: 'Only the next action changed.',
+    plan: { nextAction: 'Explicitly reconcile before new evidence.' },
+  });
+  expect(progress.status, progress.output).toBe(0);
+  expect((await f.state()).plan.norms?.version).toBeUndefined();
+  expect(f.context().assessment.normsReview.result).toBe('pass');
+  const upgrade = cli(f.root, ['update', f.id, '--stdin'], {
+    revision: f.context().revision,
+    reason: 'Explicitly adopt the new reconciliation original contract.',
+    plan: { norms: task.plan.norms },
+  });
+  expect(upgrade.status, upgrade.output).toBe(0);
+  expect((await f.state()).plan.norms?.version).toBe(2);
+  expect(cli(f.root, ['sync', f.id, 'Inspected the explicit v2 upgrade.']).status).toBe(0);
+  expect(f.context().assessment.normsReview.result).toBe('pending');
+  expect(await readFile(join(f.root, path), 'utf8')).toBe(report);
 });

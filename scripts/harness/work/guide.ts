@@ -13,7 +13,10 @@ const sections: Record<string, [string, string][]> = {
     ['docs/coordination.md', '恢复与同步'],
     ['docs/work-records.md', '核对与同步'],
   ],
-  implement: [['docs/coordination.md', '实施与协作']],
+  implement: [
+    ['docs/coordination.md', '实施与协作'],
+    ['docs/work-records.md', '实施命令'],
+  ],
   verify: [
     ['docs/coordination.md', '验证与接受'],
     ['docs/work-records.md', '记录证据'],

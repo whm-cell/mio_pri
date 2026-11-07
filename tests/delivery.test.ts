@@ -15,6 +15,7 @@ import {
   parseReport,
   reportPath,
   renderIndex,
+  reviewPath,
 } from '../scripts/harness/work/reports.ts';
 import {
   digest,
@@ -111,25 +112,24 @@ async function passing(root: string, id = 'probe') {
   task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
   await saveTask(root, task, raw);
 }
-async function prepare(root: string, id = 'probe') {
+async function prepareRequest(root: string, id = 'probe') {
   const { raw } = await loadTask(root, id);
-  return deliver(
-    root,
-    id,
-    json({
-      action: 'prepare',
-      revision: digest(raw),
-      title: 'Capability query',
-      modules: ['capability'],
-      outcomes: 'Returns the requested capability.',
-      decisions: 'Use the existing API.',
-      limitations: 'Fixture only.',
-      evidence: [
-        { criterion: 'checks', representation: 'original' },
-        { criterion: 'quality-review', representation: 'original' },
-      ],
-    }),
-  );
+  return {
+    action: 'prepare',
+    revision: digest(raw),
+    title: 'Capability query',
+    modules: ['capability'],
+    outcomes: 'Returns the requested capability.',
+    decisions: 'Use the existing API.',
+    limitations: 'Fixture only.',
+    evidence: [
+      { criterion: 'checks', representation: 'original' },
+      { criterion: 'quality-review', representation: 'original' },
+    ],
+  };
+}
+async function prepare(root: string, id = 'probe') {
+  return deliver(root, id, json(await prepareRequest(root, id)));
 }
 async function completeRequest(root: string, id = 'probe') {
   const { task, raw } = await loadTask(root, id);
@@ -179,6 +179,10 @@ it('delivers only accepted results, preserves the candidate, and verifies public
   ).rejects.toThrow();
   await expect(readFile(join(root, reportPath('probe')))).rejects.toThrow();
   await deliver(root, 'probe', json(request));
+  await expect(readFile(join(root, reviewPath('probe')))).rejects.toThrow();
+  expect(
+    parseIndex(await readFile(join(root, indexPath), 'utf8')).tasks[0]!.review,
+  ).toBeUndefined();
   expect((await loadTask(root, 'probe')).task.reviewDecision).toBe('ACCEPT');
   expect((await capture(root, (await loadTask(root, 'probe')).task)).candidate).toBe(before);
   expect(await deliver(root, 'probe', json(request))).toMatchObject({ replayed: true });
@@ -194,6 +198,129 @@ it('delivers only accepted results, preserves the candidate, and verifies public
     ),
   ).toEqual([]);
 });
+
+it('publishes a reviewable pending package and reports the actual remaining acceptance condition', async () => {
+  const root = await fixture();
+  await setup(root);
+  const candidate = (await loadTask(root, 'probe')).task.checkpoint!.candidate;
+  const request = await prepareRequest(root);
+  expect(await deliver(root, 'probe', json(request))).toMatchObject({
+    readyForAcceptance: true,
+    review: { path: reviewPath('probe'), candidate },
+  });
+  expect(await deliver(root, 'probe', json(request))).toMatchObject({ replayed: true });
+  const loaded = await loadTask(root, 'probe');
+  expect(loaded.task.releaseDisposition).toBe('HOLD_FOR_HUMAN_REVIEW');
+  expect(loaded.task.reviewDecision).toBe('PENDING');
+  expect(await assess(root, loaded.task)).toMatchObject({
+    ready: true,
+    readyForAcceptance: true,
+    releaseDisposition: 'HOLD_FOR_HUMAN_REVIEW',
+    candidate,
+  });
+  const status = spawnSync(
+    process.execPath,
+    [join(project, 'scripts/harness/work/cli.ts'), 'status'],
+    { cwd: root, encoding: 'utf8' },
+  );
+  expect(status.status, status.stderr).toBe(0);
+  expect(JSON.parse(status.stdout).tasks[0].assessment.readyForAcceptance).toBe(true);
+  const index = parseIndex(await readFile(join(root, indexPath), 'utf8'));
+  expect(index.tasks[0]).toMatchObject({ status: 'pending', review: { candidate } });
+  expect(index.tasks[0]!.report).toBeUndefined();
+  expect(
+    parseReport(await readFile(join(root, reviewPath('probe')), 'utf8'), false).acceptance,
+  ).toBeUndefined();
+  const publicCopy = await fixture();
+  await cp(join(root, 'docs/tasks'), join(publicCopy, 'docs/tasks'), { recursive: true });
+  await rm(join(publicCopy, '.work'), { recursive: true });
+  const files = (await inventory(publicCopy, await loadConfig(publicCopy))).files;
+  expect(await checkReports(publicCopy, files)).toEqual([]);
+  expect((await checkDocuments(publicCopy, files, await loadConfig(publicCopy))).errors).toEqual(
+    [],
+  );
+  const attachment = join(root, 'docs/tasks/pending/probe/evidence/checks.md');
+  await writeFile(attachment, 'Human edit must survive.');
+  expect(await assess(root, loaded.task)).toMatchObject({
+    readyForAcceptance: false,
+    releaseDisposition: 'HOLD_FOR_EVIDENCE',
+  });
+  await expect(prepare(root)).rejects.toThrow('published review evidence changed');
+  await expect(deliver(root, 'probe', json(await completeRequest(root)))).rejects.toThrow(
+    'published review evidence changed',
+  );
+  expect(await readFile(attachment, 'utf8')).toBe('Human edit must survive.');
+});
+
+it('withdraws waiting-for-acceptance when a candidate, original, or draft attachment changes', async () => {
+  const root = await fixture();
+  await setup(root);
+  await prepare(root);
+  const { task } = await loadTask(root, 'probe');
+  const file = join(root, 'src/value.ts');
+  const original = await readFile(file, 'utf8');
+  await writeFile(file, 'export const value = 2;\n');
+  expect(await assess(root, task)).toMatchObject({
+    ready: false,
+    readyForAcceptance: false,
+    releaseDisposition: 'HOLD_FOR_EVIDENCE',
+  });
+  await writeFile(file, original);
+  const log = join(root, '.work/tasks/probe/evidence/checks.log');
+  const logBefore = await readFile(log, 'utf8');
+  await writeFile(log, 'corrupt');
+  expect((await assess(root, task)).readyForAcceptance).toBe(false);
+  await writeFile(log, logBefore);
+  await writeFile(join(root, '.work/tasks/probe/delivery/evidence/checks.md'), 'corrupt');
+  expect(await assess(root, task)).toMatchObject({
+    readyForAcceptance: false,
+    draftIssue: expect.stringContaining('draft attachment changed'),
+  });
+});
+
+it.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
+  'recovers preparation interrupted after %i writes',
+  async (cut) => {
+    const root = await fixture();
+    await setup(root);
+    const request = await prepareRequest(root);
+    await deliver(root, 'probe', json(request));
+    const op = (await loadOperation(root, 'probe'))!;
+    expect(op.kind).toBe('prepare');
+    expect(op.changes).toHaveLength(8);
+    op.done = false;
+    for (let i = 0; i < op.changes.length; i++) {
+      const change = op.changes[i]!;
+      const value = i < cut ? change.after : change.before;
+      if (value === null) await rm(join(root, change.path), { force: true });
+      else await writeFile(join(root, change.path), value);
+    }
+    await writeFile(join(root, operationPath('probe')), json(op));
+    expect(await assess(root, (await loadTask(root, 'probe')).task)).toMatchObject({
+      ready: false,
+      readyForAcceptance: false,
+      errors: expect.arrayContaining([expect.stringContaining('WORK_DELIVERY_PENDING')]),
+    });
+    const beforeReplay = spawnSync(
+      process.execPath,
+      [join(project, 'scripts/harness/work/cli.ts'), 'status'],
+      { cwd: root, encoding: 'utf8' },
+    );
+    expect(JSON.parse(beforeReplay.stdout).tasks[0].assessment.readyForAcceptance).toBe(false);
+    const result = spawnSync(
+      process.execPath,
+      [join(project, 'scripts/harness/work/cli.ts'), 'deliver', 'probe', '--stdin'],
+      { cwd: root, input: json(request), encoding: 'utf8' },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect((await loadOperation(root, 'probe'))!.done).toBe(true);
+    expect((await assess(root, (await loadTask(root, 'probe')).task)).readyForAcceptance).toBe(
+      true,
+    );
+    expect(parseIndex(await readFile(join(root, indexPath), 'utf8')).tasks).toHaveLength(1);
+    await expect(readFile(join(root, reportPath('probe')))).rejects.toThrow();
+  },
+);
 
 it('refuses stale candidate, modified draft, damaged evidence and missing acceptance binding', async () => {
   const root = await fixture();
@@ -294,7 +421,7 @@ it('receives accepted history with changed code as a new local draft without aut
   await expect(receive(receiver, reportPath('probe'))).rejects.toThrow();
 });
 
-it.each([0, 1, 2, 3, 4, 5])(
+it.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
   'recovers a delivery interrupted after %i target writes without duplicate output',
   async (cut) => {
     const root = await fixture();

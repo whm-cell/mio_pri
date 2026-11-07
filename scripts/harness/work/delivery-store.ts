@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
-import { indexPath, optionalText, reportRoot } from './reports.ts';
+import { indexPath, optionalText, reportRoot, reviewRoot } from './reports.ts';
 
 interface Change {
   path: string;
@@ -14,7 +14,7 @@ interface Change {
 export interface Operation {
   version: 1;
   request: string;
-  kind: 'complete' | 'reopen';
+  kind: 'prepare' | 'complete' | 'reopen';
   candidate: string;
   inputs: Record<string, string>;
   changes: Change[];
@@ -28,7 +28,7 @@ export async function loadOperation(root: string, id: string): Promise<Operation
   const op = JSON.parse(raw) as Operation;
   if (
     op.version !== 1 ||
-    !['complete', 'reopen'].includes(op.kind) ||
+    !['prepare', 'complete', 'reopen'].includes(op.kind) ||
     !/^[a-f0-9]{64}$/.test(op.request) ||
     !Array.isArray(op.changes) ||
     typeof op.done !== 'boolean'
@@ -37,7 +37,11 @@ export async function loadOperation(root: string, id: string): Promise<Operation
   const allowed = (path: string) =>
     path === indexPath ||
     path === `.work/tasks/${id}/state.json` ||
-    path.startsWith(`${reportRoot(id)}/`);
+    path.startsWith(`${reportRoot(id)}/`) ||
+    path.startsWith(`${reviewRoot(id)}/`) ||
+    (op.kind === 'prepare' &&
+      (path === `.work/tasks/${id}/delivery/draft.md` ||
+        path.startsWith(`.work/tasks/${id}/delivery/evidence/`)));
   const paths = new Set<string>();
   for (const change of op.changes) {
     if (
@@ -122,7 +126,7 @@ export async function commitDelivery(
     throw new Error('WORK_CONFLICT: task changed before delivery');
   changes.push({ path: statePath, before: raw, after: json(task) });
   const captured = await capture(root, task);
-  if (kind === 'complete' && captured.candidate !== task.checkpoint?.candidate)
+  if (kind !== 'reopen' && captured.candidate !== task.checkpoint?.candidate)
     throw new Error('WORK_DELIVERY_STALE: candidate changed before publication');
   const op: Operation = {
     version: 1,

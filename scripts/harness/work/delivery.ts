@@ -1,8 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { format } from 'prettier';
 import { artifact, assess, capture } from './context.ts';
-import { checkedPath, digest, json, loadTask, saveTask } from './records.ts';
+import { digest, json, loadTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
 import { commitDelivery, replayDelivery, requestDigest } from './delivery-store.ts';
 import {
@@ -10,12 +9,16 @@ import {
   indexPath,
   optionalText,
   parseReport,
+  readDraft,
   readIndex,
   record,
   renderIndex,
   renderReport,
   reportPath,
   reportRoot,
+  reviewFiles,
+  reviewPath,
+  reviewRoot,
   textField,
 } from './reports.ts';
 import type { Report, SharedEvidence } from './reports.ts';
@@ -32,7 +35,7 @@ function fields(obj: Record<string, unknown>, allowed: string[]) {
 }
 
 async function verified(root: string, task: Task, candidate?: string) {
-  const assessment = await assess(root, task);
+  const assessment = await assess(root, task, false);
   if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
   if (candidate !== undefined && assessment.candidate !== candidate)
     throw new Error('WORK_DELIVERY_STALE: candidate changed');
@@ -60,12 +63,22 @@ export async function deliver(root: string, id: string, rawRequest: string) {
     throw new Error('WORK_DELIVERY_REQUEST: action prepare or complete');
   const token = requestDigest(request);
   if (
-    request.action === 'complete' &&
-    (await replayDelivery(root, id, token, async (task) => {
+    await replayDelivery(root, id, token, async (task) => {
       await verified(root, task, task.checkpoint!.candidate);
-    }))
-  )
-    return { completed: true, replayed: true, report: reportPath(id) };
+    })
+  ) {
+    if (request.action === 'complete')
+      return { completed: true, replayed: true, report: reportPath(id) };
+    const restored = await loadTask(root, id);
+    const draft = restored.task.delivery!.draft!;
+    return {
+      replayed: true,
+      readyForAcceptance: true,
+      revision: digest(restored.raw),
+      draft,
+      review: { path: reviewPath(id), sha256: draft.sha256, candidate: draft.candidate },
+    };
+  }
   if (request.revision !== digest(raw)) throw new Error('WORK_CONFLICT: read current revision');
   if (task.archived) throw new Error('WORK_ARCHIVED: reopen before delivery');
   if (!task.delivery) {
@@ -88,11 +101,17 @@ export async function deliver(root: string, id: string, rawRequest: string) {
       nextAction: 'Inspect and sync the changed contract, then collect evidence and prepare again.',
     };
   }
-  if (request.action === 'prepare') return prepare(root, task, raw, request);
+  if (request.action === 'prepare') return prepare(root, task, raw, request, token);
   return complete(root, task, raw, request, token);
 }
 
-async function prepare(root: string, task: Task, raw: string, request: Record<string, unknown>) {
+async function prepare(
+  root: string,
+  task: Task,
+  raw: string,
+  request: Record<string, unknown>,
+  token: string,
+) {
   if (!task.plan.requirement && !task.plan.sources.length)
     throw new Error('WORK_DELIVERY_SOURCE: name a public requirement or source before preparing');
   await verified(root, task);
@@ -174,14 +193,48 @@ async function prepare(root: string, task: Task, raw: string, request: Record<st
   parseReport(source, false);
   const directory = `.work/tasks/${p.id}/delivery`;
   const path = `${directory}/draft.md`;
-  await mkdir(await checkedPath(root, `${directory}/evidence`), { recursive: true });
-  for (const [name, content] of Object.entries(attachments))
-    await writeFile(await checkedPath(root, `${directory}/${name}`), content);
-  await writeFile(await checkedPath(root, path), source);
+  const { index, source: indexBefore } = await readIndex(root);
+  const existing = index.tasks.find((entry) => entry.id === p.id);
+  const previous = await reviewFiles(root, p.id, existing?.review);
+  const outputs: Record<string, string | null> = Object.fromEntries(
+    Object.keys(previous).map((name) => [name, null]),
+  );
+  const expected: Record<string, string | null> = { ...previous, [indexPath]: indexBefore };
+  for (const [name, content] of Object.entries({ ...attachments, 'report.md': source })) {
+    const sharedPath = `${reviewRoot(p.id)}/${name}`;
+    outputs[sharedPath] = content;
+    if (!(sharedPath in expected)) expected[sharedPath] = null;
+    outputs[name === 'report.md' ? path : `${directory}/${name}`] = content;
+  }
+  const review = {
+    path: reviewPath(p.id),
+    sha256: digest(source),
+    candidate: report.checkpoint.candidate,
+  };
+  index.tasks = index.tasks
+    .filter((entry) => entry.id !== p.id)
+    .concat({
+      id: p.id,
+      title: report.title,
+      modules: report.modules,
+      requirement: p.requirement?.source ?? p.sources.join(', '),
+      status: existing?.report ? 'reopened' : 'pending',
+      ...(existing?.report ? { report: existing.report } : {}),
+      review,
+    });
+  outputs[indexPath] = await markdown(renderIndex(index));
   task.delivery!.draft = { path, sha256: digest(source), candidate: report.checkpoint.candidate };
+  task.reviewDecision = 'PENDING';
+  task.stage = 'C1_EVIDENCE_PENDING';
+  task.releaseDisposition = 'HOLD_FOR_HUMAN_REVIEW';
   task.notes.push(`Prepared delivery draft ${digest(source)}; acceptance remains pending.`);
-  await saveTask(root, task, raw);
-  return { revision: digest(json(task)), draft: task.delivery!.draft, readyForAcceptance: true };
+  await commitDelivery(root, task, raw, token, 'prepare', outputs, expected);
+  return {
+    revision: digest(json(task)),
+    draft: task.delivery!.draft,
+    review,
+    readyForAcceptance: true,
+  };
 }
 
 async function preservePrevious(root: string, id: string, old: string | null) {
@@ -217,9 +270,11 @@ async function complete(
   if (!ref || request.draftSha256 !== ref.sha256)
     throw new Error('WORK_DELIVERY_STALE: prepare and review the current draft');
   await verified(root, task, ref.candidate);
-  const source = await readFile(await checkedPath(root, ref.path), 'utf8');
-  if (digest(source) !== ref.sha256) throw new Error('WORK_DELIVERY_STALE: draft bytes changed');
-  const report = parseReport(source, false);
+  const { report, attachments, index, indexBefore, pending } = await readDraft(
+    root,
+    task,
+    ref.candidate,
+  );
   const acceptance = record(request.acceptance);
   fields(acceptance, ['candidate', 'statement', 'reference']);
   if (hashField(acceptance.candidate) !== report.checkpoint.candidate)
@@ -230,29 +285,8 @@ async function complete(
     reference: textField(acceptance.reference),
   };
   const outputs: Record<string, string | null> = {};
-  for (const entry of report.evidence) {
-    const original = task.evidence
-      .filter(
-        (item) =>
-          item.criterion === entry.criterion &&
-          item.method === entry.method &&
-          item.candidate === report.checkpoint.candidate,
-      )
-      .at(-1);
-    if (
-      !original ||
-      original.sha256 !== entry.sourceSha256 ||
-      original.environment !== entry.environment
-    )
-      throw new Error('WORK_DELIVERY_STALE: evidence changed after draft preparation');
-    const content = await readFile(
-      await checkedPath(root, `.work/tasks/${task.plan.id}/delivery/${entry.path}`),
-      'utf8',
-    );
-    if (digest(content) !== entry.sha256)
-      throw new Error(`WORK_DELIVERY_EVIDENCE: draft attachment changed ${entry.path}`);
-    outputs[`${reportRoot(task.plan.id)}/${entry.path}`] = publicText(content);
-  }
+  for (const [path, content] of Object.entries(attachments))
+    outputs[`${reportRoot(task.plan.id)}/${path}`] = publicText(content);
   const previous = await optionalText(root, reportPath(task.plan.id));
   await preservePrevious(root, task.plan.id, previous);
   if (previous !== null)
@@ -262,8 +296,8 @@ async function complete(
     }
   const publicReport = publicText(await markdown(renderReport(report)));
   outputs[reportPath(task.plan.id)] = publicReport;
-  const { index, source: indexBefore } = await readIndex(root);
   const existing = index.tasks.find((entry) => entry.id === task.plan.id);
+  for (const path of Object.keys(pending)) outputs[path] = null;
   if (
     (previous === null && existing?.report) ||
     (previous !== null && existing?.report?.sha256 !== digest(previous))
@@ -291,6 +325,7 @@ async function complete(
   task.plan.sharedRef = accepted.path;
   task.notes.push(`Accepted ${accepted.candidate}; ${report.acceptance.reference}`);
   await commitDelivery(root, task, raw, token, 'complete', outputs, {
+    ...pending,
     [indexPath]: indexBefore,
     [reportPath(task.plan.id)]: previous,
   });

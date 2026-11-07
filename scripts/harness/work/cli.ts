@@ -42,6 +42,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   check <task>                          read-only context/evidence assessment
   sync <task> <reason>                  acknowledge inspected changes; retain evidence
   run <task> <criterion> -- <argv ...>  capture an automated check without a shell
+  exec <task> -- <argv ...>             check C1 before launching an implementation command
   evidence <task> <criterion> <pass|fail|pending> <artifact> <summary>
   handoff <task>                        prepare a local portable Markdown handoff
   receive <shared.md>                   verify candidate, create this member's draft
@@ -95,6 +96,7 @@ async function main() {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       const { task } = await loadTask(root, entry.name);
+      const { assessment } = await inspectTask(root, task, json(task));
       tasks.push({
         id: task.plan.id,
         goal: task.plan.goal,
@@ -102,6 +104,7 @@ async function main() {
         stage: task.stage,
         archived: task.archived,
         nextAction: task.plan.nextAction,
+        assessment,
       });
     }
     return console.log(json({ tasks }));
@@ -143,6 +146,20 @@ async function main() {
   }
   if (task.archived)
     throw new Error('WORK_ARCHIVED: explicitly reopen the record after reconciling authorization');
+  if (command === 'exec') {
+    if (args[1] !== '--' || args.length < 3) throw new Error(help);
+    if (task.stage !== 'C1_IMPLEMENTATION')
+      throw new Error('WORK_EXEC_STAGE: enter C1_IMPLEMENTATION before implementation commands');
+    const assessment = await assess(root, task);
+    if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
+    const outcome = spawnSync(args[2]!, args.slice(3), { cwd: root, stdio: 'inherit' });
+    if (outcome.error) throw outcome.error;
+    process.exitCode = outcome.status ?? 1;
+    console.log(
+      `Implementation command exited ${outcome.status}; inspect changes before work sync.`,
+    );
+    return;
+  }
   if (command === 'sync') {
     if (args.length !== 2 || !args[1]!.trim()) throw new Error(help);
     const checkpoint = await capture(root, task);

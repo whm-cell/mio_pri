@@ -84,9 +84,82 @@ async function ready(root: string, id = 'probe') {
   expect(result.status, result.output).toBe(0);
 }
 
+async function implementing(root: string) {
+  const revision = JSON.parse(invoke(root, ['context', 'probe', 'implement']).output).revision;
+  const result = invoke(root, ['update', 'probe', '--stdin'], {
+    revision,
+    reason: 'The fixture user authorized the implementation command.',
+    stage: 'C1_IMPLEMENTATION',
+  });
+  expect(result.status, result.output).toBe(0);
+}
+
 function run(root: string, script = 'console.log("observed probe")', id = 'probe') {
   return invoke(root, ['run', id, 'checks', '--', process.execPath, '-e', script]);
 }
+
+it('checks task existence and C1 before starting an implementation command', async () => {
+  const root = await fixture();
+  const argv = [
+    '--',
+    process.execPath,
+    '-e',
+    'require("node:fs").writeFileSync(".work/started", "yes")',
+  ];
+  expect(invoke(root, ['exec', 'missing', ...argv]).status).toBe(1);
+  await ready(root);
+  expect(invoke(root, ['exec', 'probe', ...argv]).output).toContain('WORK_EXEC_STAGE');
+  await expect(readFile(join(root, '.work/started'))).rejects.toThrow();
+  await implementing(root);
+  const result = invoke(root, ['exec', 'probe', ...argv]);
+  expect(result.status, result.output).toBe(0);
+  expect(await readFile(join(root, '.work/started'), 'utf8')).toBe('yes');
+  expect((await state(root)).evidence).toEqual([]);
+});
+
+it('refuses drift and non-implementation phases without running the child', async () => {
+  const root = await fixture();
+  await ready(root);
+  await implementing(root);
+  const args = [
+    'exec',
+    'probe',
+    '--',
+    process.execPath,
+    '-e',
+    'require("node:fs").writeFileSync(".work/started", "yes")',
+  ];
+  const file = join(root, 'src/value.ts');
+  const before = await readFile(file, 'utf8');
+  await writeFile(file, 'export const value = 9;\n');
+  expect(invoke(root, args).output).toContain('WORK_CONTEXT_CHANGED');
+  await writeFile(file, before);
+  await edit(root, (task) => {
+    task.stage = 'C1_EVIDENCE_PENDING';
+  });
+  expect(invoke(root, args).output).toContain('WORK_EXEC_STAGE');
+  await expect(readFile(join(root, '.work/started'))).rejects.toThrow();
+});
+
+it('retains implementation changes and child failure without syncing or inventing evidence', async () => {
+  const root = await fixture();
+  await ready(root);
+  await implementing(root);
+  const before = await state(root);
+  const result = invoke(root, [
+    'exec',
+    'probe',
+    '--',
+    process.execPath,
+    '-e',
+    'require("node:fs").writeFileSync("src/value.ts", "export const value = 2;\\n");process.exit(7)',
+  ]);
+  expect(result.status, result.output).toBe(7);
+  expect(await readFile(join(root, 'src/value.ts'), 'utf8')).toContain('value = 2');
+  expect((await state(root)).checkpoint).toEqual(before.checkpoint);
+  expect((await state(root)).evidence).toEqual([]);
+  expect(invoke(root, ['check', 'probe']).output).toContain('WORK_CONTEXT_CHANGED');
+});
 
 async function accept(root: string) {
   const current = await state(root);

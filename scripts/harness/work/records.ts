@@ -308,22 +308,28 @@ export async function loadTask(root: string, id: string) {
   return { task, raw, path };
 }
 
+/** Shared read-only recovery guard; full operation validation belongs to delivery-store. */
+export async function deliveryPending(root: string, id: string): Promise<boolean> {
+  try {
+    const operation = JSON.parse(
+      await readFile(
+        await checkedPath(root, `.work/tasks/${identifier(id)}/delivery/operation.json`),
+        'utf8',
+      ),
+    );
+    return operation.done !== true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return false;
+  }
+}
+
 /** One writer per task. Refuse changes made while a command was running; keep raw evidence. */
 export async function saveTask(root: string, task: Task, previous?: string) {
   const path = await checkedPath(root, `.work/tasks/${identifier(task.plan.id)}/state.json`);
   parseTask(json(task));
-  try {
-    const operation = JSON.parse(
-      await readFile(
-        await checkedPath(root, `.work/tasks/${task.plan.id}/delivery/operation.json`),
-        'utf8',
-      ),
-    );
-    if (operation.done !== true)
-      throw new Error('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
+  if (await deliveryPending(root, task.plan.id))
+    throw new Error('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
   await mkdir(dirname(path), { recursive: true });
   if (previous === undefined) return writeFile(path, json(task), { flag: 'wx' });
   const temporary = `${path}.${randomUUID()}.tmp`;

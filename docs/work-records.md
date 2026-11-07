@@ -9,6 +9,7 @@
 | 自动初始化／建档／复用 | `work ensure --stdin`                    |
 | 结构化更新             | `work update <task> --stdin`             |
 | 列表／核对／同步       | `work status`、`work check`、`work sync` |
+| 命令型实施             | `work exec <task> -- <argv ...>`         |
 | 验证取证               | `work run`、`work evidence`              |
 | 最终交付               | `work deliver <task> --stdin`            |
 | 交接                   | `work handoff`、`work receive`           |
@@ -58,7 +59,7 @@ pnpm work check api-probe
 pnpm work sync api-probe "已审阅实际差异，写明影响与下一步"
 ```
 
-context 只返回当前任务的需求关联、授权／范围／依赖输入、决定及其来源和确认状态、接受／归档状态、下一步、revision、该动作所需字段、核对结果及对应章节正文；不输出历史 notes、完整 checkpoint、原始日志或其他动作细则。即使上下文有问题，仍返回可读摘要和错误，便于恢复；不能把其退出成功当成 check 通过。status 输出简短 JSON 列表，不需要预先初始化；空列表不会写入 .work。
+context 只返回当前任务的需求关联、授权／范围／依赖输入、决定及其来源和确认状态、接受／归档状态、下一步、revision、该动作所需字段、核对结果及对应章节正文；不输出历史 notes、完整 checkpoint、原始日志或其他动作细则。即使上下文有问题，仍返回可读摘要和错误，便于恢复；不能把其退出成功当成 check 通过。status 输出任务列表及当前 assessment，不需要预先初始化；空列表不会写入 .work。assessment.releaseDisposition 和 readyForAcceptance 由当前候选、原件、有效草稿/附件及交付操作是否结束推导，不把旧 state.json 的标签当作当前事实；读取不会改写旧记录。ready 表示现场可继续操作，不表示已经接受。
 
 事实变化时，Agent 用 `pnpm work update api-probe --stdin` 提交，例如：
 
@@ -80,6 +81,16 @@ check 只读；ready 表示当前记录与现场一致，可继续核对已授�
 sync 只更新检查点，保留历史证据。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
 
 文件摘要会覆盖固定公共策略文件和任务所声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不再默认塞入全部操作手册；旧任务已有的来源继续兼容。路径、身份与格式检查不因减少上下文而放宽。
+
+## 实施命令
+
+安装依赖、代码生成和其他命令型修改，在 ensure、check、update 进入 `C1_IMPLEMENTATION` 后执行：
+
+```sh
+pnpm work exec api-probe -- pnpm add --save-exact package-name@version
+```
+
+工具仅按 argv 启动子进程，不经 Shell；检查任务归属、阶段、契约、候选漂移和未结束交付操作后才启动。未知任务、草稿、C0、取证阶段或现场变化均拒绝启动。命令退出码保留，失败产生的修改不回滚；不自动 sync、不制造验证原件。Agent 随后审阅实际差异再同步。此入口不是全局写入拦截器，编辑器操作仍须在写入前核对同一任务条件；调用成功不证明命令语义获授权或修改未越界。
 
 ## 记录证据
 
@@ -124,7 +135,7 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 
 ## 交付命令
 
-`pnpm work deliver <task> --stdin` 由 Agent 执行。首次在取证前提交 `{"action":"prepare","revision":"当前 revision"}`，启用固定输出分类并返回新候选；审阅后 sync，重新收集匹配证据。旧 v1 记录未启用时保留原候选算法。启用后的明确输出仅为本任务 complete 包和公共索引；不能将自己的输出作为需求来源，其他任务报告仍可作为输入。
+`pnpm work deliver <task> --stdin` 由 Agent 执行。首次在取证前提交 `{"action":"prepare","revision":"当前 revision"}`，启用固定输出分类并返回新候选；审阅后 sync，重新收集匹配证据。旧 v1 记录未启用时保留原候选算法。启用后的明确输出仅为本任务 pending／complete 包和公共索引；不能将自己的输出作为需求来源，其他任务报告仍可作为输入。
 
 所有验收项通过后，准备可读草稿：
 
@@ -143,7 +154,7 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 }
 ```
 
-每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时从原件读取 UTF-8；redacted／excerpt 必须提供共享文本。工具将摘要、环境和来源哈希写入附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。草稿保存到本人任务的 delivery/draft.md，返回新 revision 与 draft.sha256；不得以草稿存在认定完成。
+每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时从原件读取 UTF-8；redacted／excerpt 必须提供共享文本。工具将摘要、环境和来源哈希写入附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。草稿保存到本人任务的 delivery/draft.md，同一报告和必要附件发布到 `docs/tasks/pending/<task-id>/`，公共索引新增或更新 review 引用；已有最后接受报告继续保留。返回新 revision、draft.sha256、公共 review 引用和 readyForAcceptance，记录 HOLD_FOR_HUMAN_REVIEW；不得以草稿存在认定完成。发布前按原件/脱敏/摘录选择要共享的文本，不共享个人过程。
 
 取得真实结果接受后：
 
@@ -160,9 +171,9 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 }
 ```
 
-命令核对全部必需原件、候选、草稿、接受绑定，以及旧报告与附件的 HEAD 保存情况；只在全部满足时更新公共报告、必要 Markdown 附件、索引和个人接受。不会自动提交、上传或部署。准备草稿前后的代码变化使其失效；接受文本的真实性不能由字符串校验证明。
+命令核对全部必需原件、候选、草稿、接受绑定，以及旧报告与附件的 HEAD 保存情况；只在全部满足时更新公共 complete 报告、必要 Markdown 附件、索引和个人接受，移除对应 pending 包。公共待接受文件被人工改动时拒绝覆盖，先核对；旧的私有草稿仍可沿原条件完成，重新 prepare 才发布新的公共待接受入口。不会自动提交、上传或部署。准备草稿前后的代码变化使其失效；接受文本的真实性不能由字符串校验证明。
 
-中断时原样重试原 complete／reopen 请求，工具依据操作记录恢复；已完成的同一请求幂等。发现人工修改或其他写入时拒绝覆盖，先审阅冲突；未结束的交付操作会阻止其他记录写入。原报告必须先进入可恢复 Git 提交，才能被下一次完成覆盖。公共输出与候选分离仍需公共格式、链接和完整性检查，不是免检目录。
+中断时原样重试原 prepare／complete／reopen 请求，工具依据操作记录恢复；已完成的同一请求幂等。发现人工修改或其他写入时拒绝覆盖，先审阅冲突；未结束的交付操作会阻止其他记录写入。原报告必须先进入可恢复 Git 提交，才能被下一次完成覆盖。公共输出与候选分离仍需公共格式、链接和完整性检查，不是免检目录。
 
 ## 发送与接收
 
@@ -212,4 +223,4 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 可选 delivery 字段保存固定格式版本、当前草稿与最后接受报告引用；它不是通用输出排除开关。
 
-公共协议、源码、测试和已接受交付报告入库；member.json、tasks/<task>/state.json、evidence、handoff 和 inbox 位于忽略的 .work。公共 CI 不读取这些成员内容，也不替代本地 work check。备份和传输沿真实项目选择；原始历史仅在需要复现或交接时按引用取得。
+公共协议、源码、测试及用于共享审阅的 pending／已接受 complete 报告入库；member.json、tasks/<task>/state.json、evidence、handoff 和 inbox 位于忽略的 .work。公共 CI 不读取这些成员内容，也不替代本地 work check。备份和传输沿真实项目选择；原始历史仅在需要复现或交接时按引用取得。

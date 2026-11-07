@@ -2,9 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { lstat, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { beneath, inventory, loadConfig } from '../inventory.ts';
-import { checkedPath, digest, json } from './records.ts';
+import { checkedPath, deliveryPending, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
-import { deliveryOutput } from './reports.ts';
+import { deliveryOutput, readDraft } from './reports.ts';
 import { needsQualityReview, qualityCriterion, qualityReviewResult } from './quality-review.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
@@ -121,9 +121,11 @@ export async function artifact(root: string, id: string, path: string): Promise<
   return readFile(await checkedPath(root, path));
 }
 
-export async function assess(root: string, task: Task) {
+export async function assess(root: string, task: Task, inspectDelivery = true) {
   const current = await capture(root, task);
   const errors = contractIssues(task);
+  if (inspectDelivery && (await deliveryPending(root, task.plan.id)))
+    errors.push('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
   const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
   const quality = task.plan.acceptance.find((item) => item.id === qualityCriterion.id);
   if ((qualityRequired && !quality) || (quality && quality.method !== qualityCriterion.method))
@@ -181,6 +183,28 @@ export async function assess(root: string, task: Task) {
     )
       errors.push('WORK_RELEASE: matching evidence and explicit human ACCEPT are required');
   }
+  let readyForAcceptance = false;
+  let draftIssue: string | null = null;
+  if (
+    inspectDelivery &&
+    !errors.length &&
+    evidence.every((entry) => entry.result === 'pass') &&
+    task.stage === 'C1_EVIDENCE_PENDING' &&
+    task.reviewDecision === 'PENDING'
+  ) {
+    try {
+      await readDraft(root, task, current.candidate);
+      readyForAcceptance = true;
+    } catch (error) {
+      draftIssue = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const releaseDisposition =
+    !errors.length && task.stage === 'C1_RELEASED'
+      ? 'RELEASED'
+      : readyForAcceptance
+        ? 'HOLD_FOR_HUMAN_REVIEW'
+        : 'HOLD_FOR_EVIDENCE';
   return {
     ready: errors.length === 0,
     stage: task.stage,
@@ -188,6 +212,10 @@ export async function assess(root: string, task: Task) {
     changed,
     errors,
     evidence,
+    reviewDecision: task.reviewDecision,
+    releaseDisposition,
+    readyForAcceptance,
+    draftIssue,
     qualityReview: {
       required: qualityRequired,
       criterion: qualityCriterion.id,

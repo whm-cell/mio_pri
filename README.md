@@ -56,6 +56,8 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 源码任务自动登记 `quality-review`，Agent 在 verify 阶段实际审阅算法成本、未使用公共函数/方法和未复用的已有实现，再记录当前候选原件。交付缺少匹配审查不能通过；普通检查不会自行调用模型。判据与执行边界见 [验证协议](docs/coordination.md#验证与接受)。
 
+任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`，通过 `pnpm work status` 查看当前核对结果。命令型实施使用 `pnpm work exec <task> -- <argv ...>`，在子进程启动前检查 C1 条件；直接编辑仍由 Agent 遵守前置核对。证据齐全后的 `deliver prepare` 会在[公共任务索引](docs/tasks/index.md)登记待接受报告；收到针对候选的真实接受后，由 Agent 执行 `complete` 生成完成报告。pending 与 complete 分别表示待接受快照与最后接受结果。
+
 公共协议、需求、源码、测试和检查配置入库；每人的 `.work/` 内容、运行资料 `.runtime/`、凭证 `.env*`、依赖与构建产物忽略。本地开发遵守统一记录协议；公共检查不要求任何成员的私人记录存在。忽略规则不提供备份或清除已跟踪内容，跨人交接需要单独提供代码与必要证据。
 
 升级 DSH 时修改固定版本、审阅公开接口与 Profile 组成差异，再运行完整检查和产物装载。远端 CI/分支保护须在实际接入后单独验证。

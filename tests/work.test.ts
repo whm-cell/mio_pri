@@ -15,6 +15,7 @@ import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { Task } from '../scripts/harness/work/records.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
+import { artifact } from '../scripts/harness/work/context.ts';
 
 const project = resolve('.');
 const cli = join(project, 'scripts/harness/work/cli.ts');
@@ -27,6 +28,11 @@ async function fixture(actor = 'alice') {
   const root = await mkdtemp(join(tmpdir(), 'mio-work-'));
   scratch.push(root);
   await cp(join(project, 'harness.config.json'), join(root, 'harness.config.json'));
+  // This fixture models a repository without this project's task-document registry.
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  delete config.taskDocuments;
+  await writeFile(configPath, JSON.stringify(config));
   for (const [file, source] of Object.entries({
     'package.json': '{"type":"module"}\n',
     '.gitignore': '.work/\n',
@@ -844,4 +850,121 @@ it('rejects corrupt/unknown-version records and damaged handoff data without rep
   await mkdir(join(root, '.work/inbox'));
   await writeFile(join(root, '.work/inbox/bad.md'), '# No machine handoff\n');
   expect(invoke(root, ['receive', '.work/inbox/bad.md']).output).toContain('WORK_HANDOFF_FORMAT');
+});
+
+it('uses the same CLI identity before and after a source move and binds the current document, aliases and registry', async () => {
+  const root = await fixture();
+  const request = {
+    ...proposal(),
+    plan: { ...proposal().plan, result: { prd: requirement.source, key: 'value' } },
+  };
+  const first = JSON.parse(invoke(root, ['ensure', '--stdin'], request).output);
+  const id = first.task.id as string;
+  expect(run(root, 'console.log("old fixture observation")', id).status).toBe(0);
+  const before = await readFile(statePath(root, id), 'utf8');
+  await mkdir(join(root, 'docs/tasks/example'), { recursive: true });
+  await writeFile(join(root, 'docs/tasks/example/prd.md'), '# API\n');
+  await writeFile(
+    join(root, 'docs/api.md'),
+    '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
+  );
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = [
+    {
+      identity: requirement.source,
+      kind: 'prd',
+      path: 'docs/tasks/example/prd.md',
+      aliases: [requirement.source],
+    },
+  ];
+  await writeFile(configPath, JSON.stringify(config));
+  const moved = invoke(root, ['ensure', '--stdin'], {
+    ...request,
+    requirement: { ...requirement, source: 'docs/tasks/example/prd.md' },
+    plan: { ...request.plan, result: { ...request.plan.result, prd: 'docs/tasks/example/prd.md' } },
+  });
+  expect(moved.status, moved.output).toBe(0);
+  expect(JSON.parse(moved.output)).toMatchObject({
+    created: false,
+    task: { id, requirement, result: request.plan.result },
+  });
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(before);
+  const changed = JSON.parse(invoke(root, ['check', id]).output);
+  expect(changed.candidate).not.toBe(first.assessment.candidate);
+  expect(
+    changed.evidence.find((item: { criterion: string }) => item.criterion === 'checks').result,
+  ).toBe('pending');
+  expect(invoke(root, ['sync', id, 'Inspected the moved source and stable mapping.']).status).toBe(
+    0,
+  );
+  const current = await state(root, id);
+  expect(Object.keys(current.checkpoint!.files)).toEqual(
+    expect.arrayContaining(['docs/tasks/example/prd.md', 'docs/api.md', 'harness.config.json']),
+  );
+  await writeFile(
+    join(root, 'docs/tasks/example/prd.md'),
+    '# API\n\nChanged actual requirement.\n',
+  );
+  expect(invoke(root, ['check', id]).output).toContain('docs/tasks/example/prd.md');
+  expect((await state(root, id)).checkpoint).toEqual(current.checkpoint);
+  const illegal = invoke(root, ['ensure', '--stdin'], {
+    requirement: { ...requirement, key: 'bad-result' },
+    plan: { ...proposal().plan, result: { prd: 'docs/coordination.md', key: 'bad' } },
+  });
+  expect(illegal.output).toContain('WORK_RESULT');
+});
+
+it('retrieves classified tasks artifacts and receives an exact-code handoff from a registered task proposal', async () => {
+  const sender = await fixture('alice');
+  const receiver = await fixture('bob');
+  const shared = 'docs/tasks/example/handoff.md';
+  for (const root of [sender, receiver]) {
+    await mkdir(join(root, 'docs/tasks/example'), { recursive: true });
+    await writeFile(join(root, 'docs/tasks/example/prd.md'), '# API\n');
+    await writeFile(join(root, shared), '# Placeholder outside the candidate inputs.\n');
+    await writeFile(
+      join(root, 'docs/api.md'),
+      '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
+    );
+    const path = join(root, 'harness.config.json');
+    const config = JSON.parse(await readFile(path, 'utf8'));
+    config.taskDocuments = [
+      {
+        identity: requirement.source,
+        kind: 'prd',
+        path: 'docs/tasks/example/prd.md',
+        aliases: [requirement.source],
+      },
+      { identity: shared, kind: 'proposal', path: shared },
+    ];
+    await writeFile(path, JSON.stringify(config));
+  }
+  const first = invoke(sender, ['ensure', '--stdin'], proposal());
+  expect(first.status, first.output).toBe(0);
+  const id = JSON.parse(first.output).task.id as string;
+  const portable = invoke(sender, ['handoff', id]);
+  expect(portable.status, portable.output).toBe(0);
+  const bytes = await readFile(portable.output, 'utf8');
+  await writeFile(join(receiver, shared), bytes);
+  expect((await artifact(receiver, id, shared)).toString('utf8')).toBe(bytes);
+  const received = invoke(receiver, ['receive', shared]);
+  expect(received.status, received.output).toBe(0);
+  expect((await state(receiver, id)).plan.authorization).toBe('');
+  await writeFile(join(receiver, 'docs/tasks/unclassified.md'), '# Unknown');
+  await expect(artifact(receiver, id, 'docs/tasks/unclassified.md')).rejects.toThrow('WORK_SOURCE');
+  await expect(artifact(receiver, id, 'tasks/outside.md')).rejects.toThrow('WORK_ARTIFACT');
+  expect(invoke(receiver, ['receive', 'tasks/outside.md']).output).toContain('WORK_HANDOFF_PATH');
+  expect(
+    invoke(receiver, ['ensure', '--stdin'], {
+      requirement: { ...requirement, source: 'tasks/outside.md' },
+      plan: proposal().plan,
+    }).output,
+  ).toContain('WORK_SOURCE');
+  expect(
+    invoke(receiver, ['ensure', '--stdin'], {
+      requirement: { ...requirement, key: 'invalid-result' },
+      plan: { ...proposal().plan, result: { prd: 'tasks/outside.md', key: 'invalid' } },
+    }).output,
+  ).toContain('WORK_SOURCE');
 });

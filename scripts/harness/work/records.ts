@@ -13,6 +13,7 @@ export interface TaskPlan {
   id: string;
   requirement?: Requirement;
   result?: { prd: string; key: string };
+  norms?: { paths: string[]; reason: string };
   goal: string;
   scope: string[];
   inputs: string[];
@@ -137,6 +138,17 @@ export function parseTask(raw: string): Task {
     if (typeof result.key !== 'string' || !result.key.trim())
       throw new Error('WORK_SCHEMA: result.key');
     identifier(result.key as string);
+  }
+  if (plan.norms !== undefined) {
+    const norms = object(plan.norms);
+    if (
+      !strings(norms.paths) ||
+      new Set(norms.paths).size !== norms.paths.length ||
+      typeof norms.reason !== 'string' ||
+      !norms.reason.trim() ||
+      Object.keys(norms).some((key) => !['paths', 'reason'].includes(key))
+    )
+      throw new Error('WORK_SCHEMA: norms requires unique paths and a reconciliation reason');
   }
   for (const key of ['scope', 'inputs', 'sources', 'nonGoals', 'blockers']) {
     if (!strings(plan[key])) throw new Error(`WORK_SCHEMA: plan.${key}`);

@@ -7,6 +7,12 @@ import { checkReports } from './work/reports.ts';
 import { headingAnchors, markdownLinks, parseMarkdown } from './markdown.ts';
 import type { MarkdownNode } from './markdown.ts';
 import { checkApiDocuments } from './check-api-documents.ts';
+import {
+  inspectTaskDocuments,
+  requirementsPath,
+  resultDocument,
+  taskNavigation,
+} from './task-documents.ts';
 
 /** CommonMark paths/privacy for all documents; current anchors/discovery only for active pages. */
 export async function checkDocuments(
@@ -15,6 +21,9 @@ export async function checkDocuments(
   config: HarnessConfig,
 ) {
   const errors: string[] = [];
+  const registry = await inspectTaskDocuments(root, config);
+  errors.push(...registry.errors);
+  const aliases = new Set(registry.documents.flatMap((entry) => entry.aliases ?? []));
   const documents = new Map<string, MarkdownNode>();
   const edges = new Map<string, string[]>();
   for (const file of files.filter((path) => path.endsWith('.md'))) {
@@ -75,14 +84,34 @@ export async function checkDocuments(
     for (const file of queue) {
       if (reached.has(file)) continue;
       reached.add(file);
-      if (beneath(file, 'docs/tasks/history')) continue;
-      for (const target of edges.get(file) ?? []) if (!reached.has(target)) queue.push(target);
+      if (beneath(file, 'docs/tasks/history') || aliases.has(file)) continue;
+      for (const target of edges.get(file) ?? [])
+        if (!reached.has(target) && (!resultDocument(file) || resultDocument(target)))
+          queue.push(target);
     }
     for (const file of documents.keys())
-      if (file.startsWith('docs/') && !beneath(file, 'docs/tasks/history') && !reached.has(file))
+      if (
+        file.startsWith('docs/') &&
+        !beneath(file, 'docs/tasks/history') &&
+        !aliases.has(file) &&
+        !reached.has(file)
+      )
         errors.push(`DOCUMENT_UNREACHABLE ${file}`);
   } else if ([...documents.keys()].some((file) => file.startsWith('docs/')))
     errors.push('DOCUMENT_ENTRY_MISSING docs/index.md');
+  const classified = new Set(
+    registry.documents.flatMap((entry) => [entry.path, ...(entry.aliases ?? [])]),
+  );
+  for (const file of documents.keys())
+    if (
+      file.startsWith('docs/tasks/') &&
+      !taskNavigation(file) &&
+      !resultDocument(file) &&
+      !classified.has(file)
+    )
+      errors.push(`TASK_DOCUMENT_UNCLASSIFIED ${file}`);
+  if (registry.documents.length && !documents.has(requirementsPath))
+    errors.push(`TASK_DOCUMENT_ENTRY_MISSING ${requirementsPath}`);
   errors.push(...checkApiDocuments(documents, edges));
   const index = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
   const indexChecked = index.status === 0;

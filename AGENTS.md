@@ -2,6 +2,8 @@
 
 资料按[用途导航](docs/index.md)逐步展开，只登记实际遵循的子文档；新增资料链接回权威入口，不按需求完成搬迁现行契约或既有 PRD。
 
+`docs/` 汇总公共资料；现行规范按职责维护，需求、专属设计与未采纳候选统一从[任务资料与成果](docs/tasks/index.md)进入 `docs/tasks/`。位置与稳定身份只在 `harness.config.json` 的 `taskDocuments` 注册，迁移前后用 `pnpm work documents` 只读核对；旧记录和接受快照不批量改写。
+
 当前交付范围是 TypeScript 插件服务基础护栏。需求、已采用规则、模块边界与待定项见 [底座规格](docs/foundation.md)，对外契约见 [API 约定](docs/api.md)，启动和检查见 [README](README.md)。
 
 ## 团队任务协调
@@ -12,6 +14,7 @@
 - 开发成果按 [PRD 成果索引](docs/tasks/index.md) 查找，一份 PRD 一个公共入口。仅明确对应可验收开发能力的任务设置 `plan.result={prd,key}`；证据齐全后 deliver prepare 只生成个人草稿和必要附件，交回结果、候选、验证与限制。收到针对该结果的真实接受后执行 complete，按稳定成果键更新同一 PRD 汇总，保留其他成果。维护、演练与流程收尾只在本人 `.work`，检查后按需 archive，不要求公共 complete；历史护栏依据与 PRD 进度分开。重开不改旧公共事实，不继承新候选通过，成果数量不表示 PRD 整体完成。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。
 - 源码任务在 verify 阶段执行 `quality-review`：审阅算法成本、未使用的公共函数/方法及未复用的已有实现。缺项、缺证或旧候选原件不能交付；审查方法与不适用理由见 [验证协议](docs/coordination.md#验证与接受)，脚本不代替实际审阅。
+- 明确开发成果用 `plan.norms={paths,reason}` 声明受影响现行规范；无影响时允许空 paths 并说明理由。必要正文在 verify 前更新，`norms-review` 逐页核对当前候选；prepare/complete 缺项或旧候选原件拒绝。complete 只记录已验证成果，不自动采纳提案或改写规范。
 
 ## 工程边界
 

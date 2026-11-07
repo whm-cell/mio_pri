@@ -1,10 +1,10 @@
 # Mio 插件服务底座
 
-独立 TypeScript 插件包，由官方 DeepSeek Harness Profile 启动。当前交付是工程护栏、HTTP 探针、受认证保护的能力查询与全部拒绝的工具策略；还没有 AI 漫剧业务和对话接口。
+独立 TypeScript 插件包，由官方 DeepSeek Harness Profile 启动。当前提供工程护栏、基础 HTTP 探针、受保护的能力查询、可配置的账号认证与持久会话，以及全部拒绝的模型工具策略；项目、生成业务和创作对话尚未交付。认证配置与边界见[认证底座](docs/auth.md)。
 
 - [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)
-- [AI 漫剧技术底座 PRD（待评审）](docs/prd-ai-drama-foundation.md)
+- [任务需求、设计与候选](docs/tasks/index.md)
 - [HTTP API](docs/api.md)
 - [账号注册、登录与会话配置](docs/auth.md)
 - [验收标准与入口](docs/acceptance.md)
@@ -58,6 +58,8 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 源码任务自动登记 `quality-review`，Agent 在 verify 阶段实际审阅算法成本、未使用公共函数/方法和未复用的已有实现，再记录当前候选原件。交付缺少匹配审查不能通过；普通检查不会自行调用模型。判据与执行边界见 [验证协议](docs/coordination.md#验证与接受)。
 
 任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`，通过 `pnpm work status` 查看当前核对结果。命令型实施使用 `pnpm work exec <task> -- <argv ...>`，在子进程启动前检查 C1 条件；直接编辑仍由 Agent 遵守前置核对。明确的开发能力用 `plan.result={prd,key}` 关联 PRD 和稳定成果键；证据齐全后的 `deliver prepare` 只保存私有草稿，真实接受后 `complete` 更新[同一 PRD 的成果入口](docs/tasks/index.md)。维护、演练和流程收尾检查后按需 archive，个人过程不生成公共 complete。历史护栏依据单独保留，已登记成果不等于整份 PRD 完成。
+
+公共资料统一在 `docs/`，需求、设计与候选维护在 `docs/tasks/`，其他现行规范按领域维护。`pnpm work documents` 列出注册类别、稳定身份、当前位置、兼容别名及发现问题，不改写资料。开发成果交付前按[规范核对](docs/coordination.md#验证与接受)声明 `plan.norms`，在 verify 前更新必要规范并审阅当前候选；complete 不自动从任务方案生成规范。
 
 公共协议、需求、源码、测试和检查配置入库；每人的 `.work/` 内容、运行资料 `.runtime/`、凭证 `.env*`、依赖与构建产物忽略。本地开发遵守统一记录协议；公共检查不要求任何成员的私人记录存在。忽略规则不提供备份或清除已跟踪内容，跨人交接需要单独提供代码与必要证据。
 

@@ -58,6 +58,11 @@ async function fixture() {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await cp(join(project, file), join(root, file));
   }
+  // This fixture models a repository without this project's task-document registry.
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  delete config.taskDocuments;
+  await writeFile(configPath, JSON.stringify(config));
   for (const [file, text] of Object.entries({
     'package.json': '{"type":"module"}\n',
     '.gitignore': '.work/\n',
@@ -72,6 +77,7 @@ async function fixture() {
     [prd]: '# Capability PRD\n',
     'docs/other-prd.md': '# Other PRD\n',
     [indexPath]: renderIndex({ version: 2, prds: [] }),
+    'docs/tasks/requirements.md': '[PRD](../prd.md) [Other PRD](../other-prd.md)\n',
     'src/value.ts': 'export const value = 1;\n',
   })) {
     await mkdir(dirname(join(root, file)), { recursive: true });
@@ -111,6 +117,12 @@ async function setup(root: string, id = 'probe', key: string | null = id, source
   });
   if (key !== null) {
     task.plan.result = { prd: source, key };
+    task.plan.norms = { paths: ['docs/api.md'], reason: 'Fixture capability preserves this API.' };
+    task.plan.acceptance.push({
+      id: 'norms-review',
+      method: 'review',
+      criterion: 'Review fixture norms.',
+    });
     task.delivery = { version: 2 };
   }
   task.checkpoint = await capture(root, task);
@@ -147,6 +159,32 @@ async function passing(root: string, id = 'probe') {
     summary: 'Fixture quality review',
     environment: 'isolated fixture',
   });
+  if (task.plan.norms) {
+    const report = `# Fixture norms review\n\n\`\`\`mio-norms-review\n${json({
+      candidate: task.checkpoint.candidate,
+      reviewer: 'isolated fixture reviewer',
+      reason: task.plan.norms.reason,
+      documents: task.plan.norms.paths.map((path) => ({
+        path,
+        sha256: task.checkpoint!.files[path],
+        assessment: 'Fixture API and behavior agree.',
+      })),
+      conclusion: { result: 'pass', evidence: 'Synthetic fixture observation, not a real review.' },
+      limitations: 'Tests the binding protocol only.',
+    })}\`\`\`\n`;
+    const artifact = `.work/tasks/${id}/evidence/norms-${task.evidence.length}.md`;
+    await writeFile(join(root, artifact), report);
+    task.evidence.push({
+      criterion: 'norms-review',
+      method: 'review',
+      result: 'pass',
+      candidate: task.checkpoint.candidate,
+      artifact,
+      sha256: digest(report),
+      summary: 'Fixture norms review',
+      environment: 'isolated fixture',
+    });
+  }
   task.stage = 'C1_EVIDENCE_PENDING';
   task.reviewDecision = 'PENDING';
   task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
@@ -161,10 +199,10 @@ async function prepareRequest(root: string, id = 'probe') {
     outcomes: 'Returns the requested capability.',
     decisions: 'Use the existing API.',
     limitations: 'Fixture only.',
-    evidence: [
-      { criterion: 'checks', representation: 'original' },
-      { criterion: 'quality-review', representation: 'original' },
-    ],
+    evidence: (await loadTask(root, id)).task.plan.acceptance.map((item) => ({
+      criterion: item.id,
+      representation: 'original',
+    })),
   };
 }
 async function prepare(root: string, id = 'probe') {
@@ -257,6 +295,9 @@ it('prepares only private, usable evidence links and publishes a candidate-bound
   ).rejects.toThrow();
   expect(await publicFiles(root)).toEqual(before);
   await deliver(root, 'probe', json(complete));
+  expect(await readFile(join(root, indexPath), 'utf8')).toContain(
+    '[需求、设计与候选](requirements.md)',
+  );
   expect(await deliver(root, 'probe', json(complete))).toMatchObject({ replayed: true });
   const book = await results(root);
   expect(book.results).toHaveLength(1);
@@ -486,7 +527,7 @@ it('withdraws readiness for changed code, damaged originals, modified private at
   expect((await assess(root, task)).readyForAcceptance).toBe(true);
 });
 
-it.each([0, 1, 2, 3, 4])(
+it.each([0, 1, 2, 3, 4, 5])(
   'recovers private preparation interrupted after %i writes',
   async (cut) => {
     const root = await fixture();
@@ -494,7 +535,7 @@ it.each([0, 1, 2, 3, 4])(
     const request = await prepareRequest(root);
     await deliver(root, 'probe', json(request));
     const { operation } = (await loadOperation(root, 'probe'))!;
-    expect(operation.changes).toHaveLength(4);
+    expect(operation.changes).toHaveLength(5);
     operation.done = false;
     for (let i = 0; i < operation.changes.length; i++) {
       const change = operation.changes[i]!;
@@ -516,14 +557,14 @@ it.each([0, 1, 2, 3, 4])(
   },
 );
 
-it.each([0, 1, 2, 3, 4, 5, 6])(
+it.each([0, 1, 2, 3, 4, 5, 6, 7])(
   'recovers completion interrupted after %i writes without duplicate results',
   async (cut) => {
     const root = await fixture();
     await setup(root);
     const request = await finish(root);
     const { operation } = (await loadOperation(root, 'probe'))!;
-    expect(operation.changes).toHaveLength(6);
+    expect(operation.changes).toHaveLength(7);
     operation.done = false;
     for (let i = 0; i < operation.changes.length; i++) {
       const change = operation.changes[i]!;
@@ -686,7 +727,12 @@ it('rejects malformed result targets and upgrades a reopened v1 task without tra
   const root = await fixture();
   await setup(root, 'legacy', null);
   let loaded = await loadTask(root, 'legacy');
-  for (const result of [{ prd }, { prd, key: 1 }, { prd: '.work/private.md', key: 'capability' }]) {
+  for (const result of [
+    { prd },
+    { prd, key: 1 },
+    { prd: '.work/private.md', key: 'capability' },
+    { prd: 'tasks/wrong.md', key: 'capability' },
+  ]) {
     await expect(
       updateTask(
         root,
@@ -722,6 +768,7 @@ it('rejects malformed result targets and upgrades a reopened v1 task without tra
       plan: {
         authorization: 'Fixture authorizes development repair.',
         result: { prd, key: 'capability' },
+        norms: { paths: ['docs/api.md'], reason: 'Fixture capability preserves this API.' },
       },
     }),
   );
@@ -826,4 +873,223 @@ it('binds sibling detail inputs while excluding only the selected result page', 
   await writeFile(join(root, resultPath({ prd, key: 'beta' })), 'Interfering sibling edit\n');
   expect((await capture(root, task)).candidate).not.toBe(task.checkpoint!.candidate);
   expect(await checkReports(root, Object.keys(await publicFiles(root)))).not.toEqual([]);
+});
+
+async function movedPrd(root: string, kind = 'prd') {
+  const path = 'docs/tasks/example/prd.md';
+  await mkdir(dirname(join(root, path)), { recursive: true });
+  await writeFile(join(root, path), await readFile(join(root, prd), 'utf8'));
+  await writeFile(join(root, prd), `# 资料已迁移\n\n[当前资料](../${path})\n`);
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = [{ identity: prd, kind, path, aliases: [prd] }];
+  await writeFile(configPath, JSON.stringify(config));
+  return path;
+}
+
+it('resolves old and new PRD paths to the same immutable accepted book while receive compares historical physical files', async () => {
+  const root = await fixture();
+  await setup(root);
+  await finish(root);
+  const originalIndex = await readFile(join(root, indexPath), 'utf8');
+  const originalBook = await readFile(join(root, reportPath(prd)), 'utf8');
+  const old = (await results(root)).results[0]!;
+  const moved = await movedPrd(root);
+  expect(await results(root, moved)).toEqual(await results(root, prd));
+  expect((await results(root)).results[0]).toEqual(old);
+  const files = (await inventory(root, await loadConfig(root))).files;
+  await rm(join(root, '.work'), { recursive: true });
+  expect(await checkReports(root, files)).toEqual([]);
+  await initializeMember(root, 'bob');
+  const received = await receive(root, reportPath(prd), 'probe');
+  expect(received.plan.result).toEqual({ prd, key: 'probe' });
+  expect(received.notes.join(' ')).toContain(prd);
+  expect(received.notes.join(' ')).toContain('Differences among the historical manifest paths:');
+  expect(received.evidence).toEqual([]);
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(originalIndex);
+  expect(await readFile(join(root, reportPath(prd)), 'utf8')).toBe(originalBook);
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments[0].identity = moved;
+  await writeFile(configPath, JSON.stringify(config));
+  await expect(results(root, moved)).rejects.toThrow(
+    'accepted PRD must remain a registry identity',
+  );
+  expect((await checkReports(root, files)).join()).toContain('WORK_REPORT_BINDING');
+});
+
+it('rechecks current PRD classification before any new delivery, while preserving historical parsing', async () => {
+  const root = await fixture();
+  await setup(root);
+  await movedPrd(root, 'design');
+  await passing(root);
+  await expect(prepare(root)).rejects.toThrow('WORK_RESULT');
+  expect((await readIndex(root)).index.prds).toEqual([]);
+});
+
+it('stores a new docs/tasks PRD result in the same docs/tasks/complete root and protects orphans', async () => {
+  const root = await fixture();
+  const source = 'docs/tasks/new/prd.md';
+  await mkdir(dirname(join(root, source)), { recursive: true });
+  await writeFile(join(root, source), '# New requirement\n');
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = [{ identity: source, kind: 'prd', path: source }];
+  await writeFile(configPath, JSON.stringify(config));
+  await setup(root, 'new-result', 'feature', source);
+  await finish(root, 'new-result');
+  expect(reportPath(source)).toMatch(/^docs\/tasks\/complete\//);
+  expect((await results(root, source)).results[0]?.key).toBe('feature');
+  let files = (await inventory(root, await loadConfig(root))).files;
+  expect(await checkReports(root, files)).toEqual([]);
+  const orphan = `${evidenceRoot({ prd: source, key: 'feature' })}/orphan.md`;
+  await writeFile(join(root, orphan), 'Unlinked new result evidence.');
+  files = (await inventory(root, await loadConfig(root))).files;
+  expect((await checkReports(root, files)).join()).toContain(`WORK_REPORT_ORPHAN: ${orphan}`);
+});
+
+it('blocks missing norms and stale norm originals without promoting or editing normative pages at complete', async () => {
+  const root = await fixture();
+  await setup(root);
+  let loaded = await loadTask(root, 'probe');
+  delete loaded.task.plan.norms;
+  loaded.task.plan.acceptance = loaded.task.plan.acceptance.filter(
+    (item) => item.id !== 'norms-review',
+  );
+  loaded.task.checkpoint = await capture(root, loaded.task);
+  await saveTask(root, loaded.task, loaded.raw);
+  const legacy = (await loadTask(root, 'probe')).raw;
+  await expect(prepare(root)).rejects.toThrow('WORK_NORMS_CONTRACT');
+  expect((await loadTask(root, 'probe')).raw).toBe(legacy);
+  await updateTask(
+    root,
+    'probe',
+    json({
+      revision: digest(legacy),
+      reason: 'Explicitly reconcile the affected current API.',
+      plan: {
+        norms: { paths: ['docs/api.md'], reason: 'The current API covers the fixture result.' },
+      },
+    }),
+  );
+  await passing(root);
+  const api = await readFile(join(root, 'docs/api.md'), 'utf8');
+  await prepare(root);
+  await writeFile(
+    join(root, 'docs/api.md'),
+    api + '\nUpdated normative body before verification.\n',
+  );
+  const changedRequest = await completeRequest(root);
+  await expect(deliver(root, 'probe', json(changedRequest))).rejects.toThrow(
+    'WORK_CONTEXT_CHANGED',
+  );
+  await passing(root);
+  await finish(root);
+  expect(await readFile(join(root, 'docs/api.md'), 'utf8')).toBe(
+    api + '\nUpdated normative body before verification.\n',
+  );
+  loaded = await loadTask(root, 'probe');
+  const norms = loaded.task.evidence.filter((item) => item.criterion === 'norms-review');
+  expect(new Set(norms.map((item) => item.candidate)).size).toBeGreaterThan(1);
+});
+
+const oldIndexBody = (source: string) =>
+  source.replace(
+    '# 任务资料与成果\n\n[需求、设计与候选](requirements.md)：按当前目标展开相关任务资料。',
+    '# PRD 成果索引',
+  );
+
+it('reads only complete old or new canonical index templates and preserves activity navigation on complete', async () => {
+  const root = await fixture();
+  const current = await readFile(join(root, indexPath), 'utf8');
+  const old = oldIndexBody(current);
+  expect(old).not.toBe(current);
+  for (const source of [old, current]) {
+    await writeFile(join(root, indexPath), source);
+    expect((await readIndex(root)).index).toEqual({ version: 2, prds: [] });
+    await writeFile(join(root, indexPath), source + '\nForged acceptance body.\n');
+    await expect(readIndex(root)).rejects.toThrow('WORK_REPORT_INTEGRITY');
+  }
+  await writeFile(join(root, indexPath), old);
+  await setup(root);
+  await finish(root);
+  const published = await readFile(join(root, indexPath), 'utf8');
+  expect(published).toContain('[需求、设计与候选](requirements.md)');
+  expect((await readIndex(root)).index.prds[0]?.prd).toBe(prd);
+});
+
+it('rejects a first completion without real activity navigation instead of publishing a dangling index', async () => {
+  const root = await fixture();
+  await setup(root);
+  let loaded = await loadTask(root, 'probe');
+  loaded.task.plan.scope = ['src'];
+  await saveTask(root, loaded.task, loaded.raw);
+  await passing(root);
+  await prepare(root);
+  const navigation = await readFile(join(root, 'docs/tasks/requirements.md'), 'utf8');
+  await rm(join(root, 'docs/tasks/requirements.md'));
+  const indexBefore = await readFile(join(root, indexPath), 'utf8');
+  const request = await completeRequest(root);
+  await expect(deliver(root, 'probe', json(request))).rejects.toThrow('WORK_DELIVERY_NAVIGATION');
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(indexBefore);
+  await expect(readFile(join(root, reportPath(prd)))).rejects.toHaveProperty('code', 'ENOENT');
+  await writeFile(join(root, 'docs/tasks/requirements.md'), navigation);
+  await deliver(root, 'probe', json(request));
+  loaded = await loadTask(root, 'probe');
+  expect(loaded.task.stage).toBe('C1_RELEASED');
+});
+
+it('rechecks activity navigation on unfinished completion replay without changing the original journal', async () => {
+  const root = await fixture();
+  await setup(root);
+  const loaded = await loadTask(root, 'probe');
+  loaded.task.plan.scope = ['src'];
+  await saveTask(root, loaded.task, loaded.raw);
+  await passing(root);
+  const request = await finish(root);
+  const { operation } = (await loadOperation(root, 'probe'))!;
+  operation.done = false;
+  for (const change of operation.changes) {
+    if (change.before === null) await rm(join(root, change.path), { force: true });
+    else await writeFile(join(root, change.path), change.before);
+  }
+  const journal = json(operation);
+  await writeFile(join(root, operationPath('probe')), journal);
+  const navigation = await readFile(join(root, 'docs/tasks/requirements.md'), 'utf8');
+  await rm(join(root, 'docs/tasks/requirements.md'));
+  await expect(deliver(root, 'probe', json(request))).rejects.toThrow('WORK_DELIVERY_NAVIGATION');
+  expect(await readFile(join(root, operationPath('probe')), 'utf8')).toBe(journal);
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(
+    operation.changes.find((change) => change.path === indexPath)!.before,
+  );
+  await writeFile(join(root, 'docs/tasks/requirements.md'), navigation);
+  expect(await deliver(root, 'probe', json(request))).toMatchObject({
+    completed: true,
+    replayed: true,
+  });
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(
+    operation.changes.find((change) => change.path === indexPath)!.after,
+  );
+});
+
+it('preserves byte conflicts between canonical index templates during journal recovery', async () => {
+  const root = await fixture();
+  await setup(root);
+  const request = await finish(root);
+  const { operation } = (await loadOperation(root, 'probe'))!;
+  operation.done = false;
+  const indexChange = operation.changes.find((change) => change.path === indexPath)!;
+  const old = oldIndexBody(indexChange.before!);
+  await writeFile(join(root, indexPath), old);
+  const stateChange = operation.changes.at(-1)!;
+  await writeFile(join(root, stateChange.path), stateChange.before!);
+  const journal = json(operation);
+  await writeFile(join(root, operationPath('probe')), journal);
+  expect((await readIndex(root)).index.prds).toEqual([]);
+  await expect(deliver(root, 'probe', json(request))).rejects.toThrow('WORK_DELIVERY_CONFLICT');
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(old);
+  expect(await readFile(join(root, operationPath('probe')), 'utf8')).toBe(journal);
+  await writeFile(join(root, indexPath), indexChange.before!);
+  await deliver(root, 'probe', json(request));
+  expect(await readFile(join(root, indexPath), 'utf8')).toBe(indexChange.after);
 });

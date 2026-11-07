@@ -6,6 +6,7 @@ import { afterEach, expect, it } from 'vitest';
 import { digest } from '../scripts/harness/work/records.ts';
 import type { Task } from '../scripts/harness/work/records.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
+import { normsIssues } from '../scripts/harness/work/norms-review.ts';
 
 const project = resolve('.');
 const scratch: string[] = [];
@@ -35,6 +36,11 @@ async function fixture(scope = ['src']) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await cp(join(project, file), join(root, file));
   }
+  // This fixture models a repository without this project's task-document registry.
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  delete config.taskDocuments;
+  await writeFile(configPath, JSON.stringify(config));
   for (const [file, value] of Object.entries({
     'package.json': '{"type":"module"}',
     'AGENTS.md': '# Fixture rules',
@@ -49,6 +55,7 @@ async function fixture(scope = ['src']) {
     plan: {
       goal: 'Change a fixture capability.',
       result: { prd: 'docs/api.md', key: 'fixture-capability' },
+      norms: { paths: [], reason: 'Fixture constant changes no public normative behavior.' },
       scope,
       inputs: ['src'],
       authorization: 'Fixture user authorizes local changes and checks.',
@@ -90,14 +97,14 @@ it.each(['src', 'scripts/harness', 'scripts/service', 'tests', '.', 'src/planned
 it('leaves a document task alone despite source inputs, and registers review on scope expansion', async () => {
   const f = await fixture(['docs/api.md']);
   expect(f.context().assessment.qualityReview.result).toBe('not_required');
-  expect((await f.state()).plan.acceptance).toHaveLength(1);
+  expect((await f.state()).plan.acceptance).toHaveLength(2);
   const result = cli(f.root, ['update', f.id, '--stdin'], {
     revision: f.context().revision,
     reason: 'Fixture user adds source implementation.',
     plan: { scope: ['src', 'docs/api.md'] },
   });
   expect(result.status, result.output).toBe(0);
-  expect((await f.state()).plan.acceptance).toHaveLength(2);
+  expect((await f.state()).plan.acceptance).toHaveLength(3);
   expect(JSON.parse(result.output).assessment.errors.join()).toContain('WORK_CONTEXT_CHANGED');
   await rm(join(f.root, 'src/value.ts'));
   // Use default manifest inputs after deleting the only source; the planned source scope remains.
@@ -138,7 +145,9 @@ it('refuses missing or automated quality criteria and repairs legacy omission on
       reason: 'Register the missing required review.',
     }).status,
   ).toBe(0);
-  expect((await f.state()).plan.acceptance.at(-1)?.method).toBe('review');
+  expect(
+    (await f.state()).plan.acceptance.find((item) => item.id === 'quality-review')?.method,
+  ).toBe('review');
 });
 
 it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and rejects rebinding an old original', async () => {
@@ -156,7 +165,7 @@ it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and r
       outcomes: 'Fixture implementation is ready.',
       decisions: 'Use existing protocol.',
       limitations: 'Isolated fixture only.',
-      evidence: ['checks', 'quality-review'].map((criterion) => ({
+      evidence: ['checks', 'quality-review', 'norms-review'].map((criterion) => ({
         criterion,
         representation: 'original',
       })),
@@ -209,6 +218,26 @@ it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and r
     'pending',
     'pass',
   ]);
+  const norms = (await f.state()).plan.norms!;
+  const normsPath = `.work/tasks/${f.id}/evidence/norms.md`;
+  await writeFile(
+    join(f.root, normsPath),
+    `\`\`\`mio-norms-review\n${JSON.stringify({
+      candidate,
+      reviewer: 'fixture reviewer',
+      reason: norms.reason,
+      documents: [],
+      conclusion: {
+        result: 'pass',
+        evidence: 'Synthetic fixture has no affected normative behavior.',
+      },
+      limitations: 'Fixture only.',
+    })}\n\`\`\`\n`,
+  );
+  expect(
+    cli(f.root, ['evidence', f.id, 'norms-review', 'pass', normsPath, 'Fixture norm review.'])
+      .status,
+  ).toBe(0);
   expect(prepare().status).toBe(0);
   expect((await f.state()).reviewDecision).toBe('PENDING');
   await writeFile(join(f.root, 'src/value.ts'), 'export const value = 2;');
@@ -218,7 +247,7 @@ it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and r
   expect(
     cli(f.root, ['evidence', f.id, 'quality-review', 'pass', valid.path, 'Old review.']).output,
   ).toContain('review candidate mismatch');
-  expect((await f.state()).evidence).toHaveLength(4);
+  expect((await f.state()).evidence).toHaveLength(5);
 });
 
 it('rechecks review contents at delivery instead of trusting a forged pass label', async () => {
@@ -247,4 +276,124 @@ it('rechecks review contents at delivery instead of trusting a forged pass label
   expect(output).toContain('unused');
   expect(output).toContain('reuse');
   expect(output).not.toContain('## 交付命令');
+});
+
+it('requires actual candidate-bound normative page observations and rejects old originals after a normative edit', async () => {
+  const f = await fixture(['docs/api.md']);
+  const changed = cli(f.root, ['update', f.id, '--stdin'], {
+    revision: f.context().revision,
+    reason: 'Review the affected current API.',
+    plan: { norms: { paths: ['docs/api.md'], reason: 'The fixture API covers this result.' } },
+  });
+  expect(changed.status, changed.output).toBe(0);
+  expect(cli(f.root, ['sync', f.id, 'Inspected the explicit normative declaration.']).status).toBe(
+    0,
+  );
+  expect(
+    cli(f.root, ['run', f.id, 'checks', '--', process.execPath, '-e', 'console.log(1)']).status,
+  ).toBe(0);
+  const task = await f.state();
+  const current = task.checkpoint!;
+  const report = {
+    candidate: current.candidate,
+    reviewer: 'fixture reviewer',
+    reason: task.plan.norms!.reason,
+    documents: [
+      {
+        path: 'docs/api.md',
+        sha256: current.files['docs/api.md'],
+        assessment: 'Synthetic API agrees with the tested fixture result.',
+      },
+    ],
+    conclusion: { result: 'pass', evidence: 'Synthetic page observation, protocol test only.' },
+    limitations: 'No claim of real semantic review.',
+  };
+  const path = `.work/tasks/${f.id}/evidence/norms-page.md`;
+  const submit = async (value: unknown) => {
+    await writeFile(
+      join(f.root, path),
+      `\`\`\`mio-norms-review\n${JSON.stringify(value)}\n\`\`\`\n`,
+    );
+    return cli(f.root, [
+      'evidence',
+      f.id,
+      'norms-review',
+      'pass',
+      path,
+      'Fixture page observations.',
+    ]);
+  };
+  expect((await submit({ ...report, documents: [] })).output).toContain('WORK_NORMS_EVIDENCE');
+  expect(
+    (await submit({ ...report, documents: [{ ...report.documents[0], sha256: 'a'.repeat(64) }] }))
+      .output,
+  ).toContain('hash/path mismatch');
+  expect((await submit(report)).status).toBe(0);
+  const oldOriginal = await readFile(join(f.root, path), 'utf8');
+  expect(f.context().assessment.normsReview.result).toBe('pass');
+  await writeFile(join(f.root, 'docs/api.md'), '# Updated current API\n');
+  expect(cli(f.root, ['check', f.id]).status).toBe(1);
+  expect(
+    cli(f.root, ['sync', f.id, 'Reviewed normative edits before taking new evidence.']).status,
+  ).toBe(0);
+  expect(f.context().assessment.normsReview.result).toBe('pending');
+  expect(
+    cli(f.root, ['evidence', f.id, 'norms-review', 'pass', path, 'Attempt old original.']).output,
+  ).toContain('candidate or declaration mismatch');
+  expect(await readFile(join(f.root, path), 'utf8')).toBe(oldOriginal);
+});
+
+it('allows only current normative pages and an explicitly justified empty set', async () => {
+  const f = await fixture(['docs/api.md']);
+  await mkdir(join(f.root, 'docs/tasks/example'), { recursive: true });
+  await writeFile(join(f.root, 'docs/tasks/example/prd.md'), '# Requirement');
+  await writeFile(join(f.root, 'docs/tasks/example/proposal.md'), '# Candidate');
+  await writeFile(
+    join(f.root, 'docs/compat-prd.md'),
+    '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
+  );
+  const configPath = join(f.root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = [
+    {
+      identity: 'docs/compat-prd.md',
+      kind: 'prd',
+      path: 'docs/tasks/example/prd.md',
+      aliases: ['docs/compat-prd.md'],
+    },
+    {
+      identity: 'docs/tasks/example/proposal.md',
+      kind: 'proposal',
+      path: 'docs/tasks/example/proposal.md',
+    },
+  ];
+  await writeFile(configPath, JSON.stringify(config));
+  const plan = (await f.state()).plan;
+  for (const path of [
+    'docs/compat-prd.md',
+    'docs/tasks/example/prd.md',
+    'docs/tasks/example/proposal.md',
+    'docs/tasks/index.md',
+  ]) {
+    expect(
+      (
+        await normsIssues(f.root, {
+          ...plan,
+          norms: { paths: [path], reason: 'Fixture rejection.' },
+        })
+      ).join(),
+    ).toContain('WORK_NORMS_PATH');
+  }
+  expect(
+    await normsIssues(f.root, {
+      ...plan,
+      norms: { paths: ['docs/api.md'], reason: 'Fixture actual current contract.' },
+    }),
+  ).toEqual([]);
+  expect(
+    await normsIssues(f.root, {
+      ...plan,
+      norms: { paths: [], reason: 'Fixture implementation has no normative impact.' },
+    }),
+  ).toEqual([]);
 });

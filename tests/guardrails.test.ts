@@ -16,6 +16,11 @@ async function fixture(extra: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'mio-guard-'));
   scratch.push(root);
   await cp(join(project, 'harness.config.json'), join(root, 'harness.config.json'));
+  // This fixture models a repository without this project's task-document registry.
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  delete config.taskDocuments;
+  await writeFile(configPath, JSON.stringify(config));
   await cp(join(project, 'tsconfig.json'), join(root, 'tsconfig.json'));
   await cp(join(project, 'tsconfig.build.json'), join(root, 'tsconfig.build.json'));
   for (const [file, text] of Object.entries({
@@ -60,6 +65,11 @@ it.each([
     'SOURCE_UNSUPPORTED',
   ],
   ['unclassified new module', { 'worker/run.ts': 'export const run = 1;' }, 'FILE_UNCLASSIFIED'],
+  [
+    'unsupported top-level task area',
+    { 'tasks/wrong.md': '# Wrong task location' },
+    'FILE_UNCLASSIFIED',
+  ],
   [
     'framework crossing',
     { 'src/other.ts': "export type { Context } from '@deepseek-ai/cordis';" },

@@ -9,6 +9,7 @@
 | 自动初始化／建档／复用 | `work ensure --stdin`                    |
 | 结构化更新             | `work update <task> --stdin`             |
 | 列表／核对／同步       | `work status`、`work check`、`work sync` |
+| 资料分类／迁移核对     | `work documents`                         |
 | 命令型实施             | `work exec <task> -- <argv ...>`         |
 | 验证取证               | `work run`、`work evidence`              |
 | 最终交付               | `work deliver <task> --stdin`            |
@@ -54,6 +55,10 @@ plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance
 源码范围的 ensure／update 会补入 `quality-review`，保留已有同名 criterion 文本但要求 method 为 review。自动登记后的契约参与候选摘要；ensure 重试不重复添加，读取旧记录不会改写其契约。`assessment.qualityReview` 返回是否需要及当前原件状态；ready 只表示可继续执行，pending 审查仍阻止生成交付草稿。
 
 ## 核对与同步
+
+`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，移动后必须保留该路径的短导航 alias。新请求的 requirement.source 和 result.prd 归一到 identity，新旧 path 因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选同时摘要实际目标、相关 alias 和配置，迁移或目标正文变化须重新核对证据。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；成果与历史目录仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
+
+注册的活动资料只能在 `docs/tasks/`，由任务总索引经 `requirements.md` 发现；complete/history/pending 与两份导航不是活动正文。启用注册后，新 result.prd 必须是 kind=prd，顶层 tasks 不作为公共资料或成果目录。新 complete 及其未完成重放会核对真实 requirements.md 存在，不自动创建导航；旧索引只按原完整模板兼容读取，额外正文与恢复时的字节冲突照常拒绝。
 
 ```sh
 pnpm work context api-probe resume
@@ -133,9 +138,32 @@ evidence 只用于 review／behavior，登记本任务 evidence 目录的真实�
 pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/evidence/quality-review.md "实际审查进度与限制"
 ```
 
+`norms-review` 复用同一 evidence 命令。原件附一个 `mio-norms-review` 块，reason 与 plan.norms 一致，documents 对 paths 逐页保存当前候选文件摘要和实际观察。下面同样是未执行模板；无规范影响时 documents 为 []，结论依据仍需核对空 paths 的理由：
+
+```json
+{
+  "candidate": "context 返回的当前候选",
+  "reviewer": "实际审阅者",
+  "reason": "与 plan.norms.reason 完全相同",
+  "documents": [
+    {
+      "path": "docs/实际规范.md",
+      "sha256": "当前候选中该页的摘要",
+      "assessment": "实际覆盖、修改与未决核对"
+    }
+  ],
+  "conclusion": { "result": "pending", "evidence": "尚未逐页核对当前候选" },
+  "limitations": "尚未执行"
+}
+```
+
+将上述 JSON 放入标记为 `mio-norms-review` 的代码块后登记。结论只能是 pass/fail/pending；不匹配候选、页面摘要、声明或缺少观察拒绝登记。命令不证明观察已发生或规范语义充分。
+
 当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
 
 ## 交付命令
+
+开发成果先用 ensure/update 明确 `plan.norms={"paths":["docs/实际规范.md"],"reason":"实际影响与核对理由"}`。没有规范影响可显式用空 paths，仍须说明理由并登记人工 norms-review。仅当前规范、必要 README/AGENTS 可列入；任务方案、迁移跳转与接受存档不算规范。必要正文在 verify 前更新并纳入候选，prepare/complete 不负责修改或采纳正文；旧记录缺声明需显式 update，读取不迁移。
 
 `pnpm work deliver <task> --stdin` 只用于明确的 PRD 开发成果，由 Agent 执行。建档或带 revision 的 update 中设置 `plan.result={"prd":"实际公共 PRD.md","key":"稳定成果键"}`；prd 必须是存在的公共 Markdown，key 用与任务 ID 相同的字符规则。Agent 判断它是否对应真实可验收能力，工具不从文件名、scope 或流程标签推断。未设置 result 的维护、检查和演练只保留个人记录，核对后 archive；prepare／complete 均拒绝公共写入。
 
@@ -179,7 +207,7 @@ ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 upd
 }
 ```
 
-命令核对必需原件、候选、私有草稿和接受绑定，按 PRD 路径派生的稳定目录更新 `docs/tasks/complete/<prd-id>/report.md`。每个 key 保存自己的受验版本、必要证据和接受；同 key 更新保留兄弟成果，索引每 PRD 一条，不表示 PRD 整体完成。新 key 可直接追加；替换已有 key 时，旧结果与必要附件须在当前 HEAD 可恢复，按 key 比较，未提交的兄弟成果不阻塞替换。公共文件遭人工修改时先核对，不能覆盖。不会自动提交、上传或部署；接受文本的真实性不能由字符串校验证明。
+命令核对必需原件、候选、私有草稿和接受绑定，按注册稳定身份派生唯一成果目录 `docs/tasks/complete/<prd-id>/report.md`；新旧 PRD 一致。每个 key 保存自己的受验版本、必要证据和接受；同 key 更新保留兄弟成果，任务总索引每 PRD 一条，不表示 PRD 整体完成。新 key 可直接追加；替换已有 key 时，旧结果与必要附件须在当前 HEAD 可恢复，按 key 比较，未提交的兄弟成果不阻塞替换。公共文件遭人工修改时先核对，不能覆盖。不会自动提交、上传或部署；接受文本的真实性不能由字符串校验证明。
 
 中断时原样重试原 v2 prepare／complete 请求，工具依据 journal 恢复；未受干扰的同一请求幂等。修改后的索引、汇总、附件或状态拒绝覆盖，未结束操作阻止其他记录写入。已完成请求也不重写被人恢复的旧字节；后续存在合法更新时读取当前成果，不重放旧快照。reopen 只更新个人状态，不改公共事实。公开格式、链接与完整性单独检查，输出排除不是免检。
 
@@ -196,7 +224,7 @@ handoff 输出本地 `handoff-<内容摘要>.md`。相同内容复用，候选�
 
 接收方也可用 `work receive docs/tasks/complete/<prd-id>/report.md <result-key>` 选择一个成果；只有一项时可省略 key。工具核对公开附件，创建本人草稿，并在 notes 列出历史清单内当前文件的差异，不宣称发现清单外新增文件。草稿不继承授权、写入范围、checkpoint 或通过原件，须重新定义当前契约。旧 v1 报告可从 `docs/tasks/history/complete/<task-id>/report.md` 读取为私有草稿；历史路径映射不改旧候选。精确代码 handoff 仍要求文件匹配。
 
-接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已有公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
+接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已分类的公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联与规范声明，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
 
 实际取得必要原件后登记或按授权重跑，再 resume／sync。哈希与路径不能取回文件；本机目录不是共享入口，发布和上传继续服从实际授权。
 
@@ -217,6 +245,7 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 | member／workspace／plan.id                          | 本人成员、真实工作区、任务目录绑定；成员只是本地标签                                                          |
 | plan.requirement（可选）                            | `{source,section,key}`；公共 PRD／规格章节与个人拆解项关联；新任务由此生成稳定 ID，旧记录无需迁移             |
 | plan.result（可选）                                 | `{prd,key}`；明确开发能力的公共 PRD 与稳定成果键；缺省为未声明公共成果，仅维护个人记录、不自动发布            |
+| plan.norms（开发成果交付必需）                      | `{paths,reason}`；实际现行规范和影响理由，空 paths 表示明确无影响；norms-review 原件绑定候选及逐页摘要        |
 | plan.goal／scope／inputs／sources                   | 目标、写入范围、所读代码／配置、相关需求文件                                                                  |
 | plan.authorization／nonGoals                        | 真实授权与非目标                                                                                              |
 | plan.acceptance                                     | ID、可观察判据、automated／review／behavior                                                                   |

@@ -66,6 +66,7 @@ export function taskSummary(task: Task, action: string) {
     id: task.plan.id,
     ...(task.plan.requirement ? { requirement: task.plan.requirement } : {}),
     ...(task.plan.result ? { result: task.plan.result } : {}),
+    ...(task.plan.norms ? { norms: task.plan.norms } : {}),
     goal: task.plan.goal,
     stage: task.stage,
     reviewDecision: task.reviewDecision,

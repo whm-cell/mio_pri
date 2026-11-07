@@ -22,6 +22,7 @@ import {
   textField,
 } from './legacy-reports.ts';
 import type { SharedEvidence } from './legacy-reports.ts';
+import { documentCatalog, resolveDocument, resultDocument } from '../task-documents.ts';
 
 export { hashField, metadata, optionalText, record, textField } from './legacy-reports.ts';
 export type { SharedEvidence } from './legacy-reports.ts';
@@ -274,16 +275,22 @@ export async function readIndex(root: string) {
   const index = source === null ? { version: 2 as const, prds: [] } : parseIndex(source);
   if (source !== null) {
     const options = { parser: 'markdown', printWidth: 100 };
-    const [actual, expected] = await Promise.all([
+    const [actual, expected, legacy] = await Promise.all([
       format(source, options),
       format(renderIndex(index), options),
+      format(indexMarkdown(index, false), options),
     ]);
-    if (actual !== expected)
+    if (actual !== expected && actual !== legacy)
       throw new Error('WORK_REPORT_INTEGRITY: index content differs from its entries');
   }
   return { source, index };
 }
 export async function readBook(root: string, prd: string, index: TaskIndex) {
+  const catalog = await documentCatalog(root);
+  for (const entry of index.prds)
+    if (resolveDocument(entry.prd, catalog).identity !== entry.prd)
+      throw new Error('WORK_REPORT_BINDING: accepted PRD must remain a registry identity');
+  prd = resolveDocument(prd, catalog).identity;
   const source = await optionalText(root, reportPath(prd));
   const ref = index.prds.find((entry) => entry.prd === prd)?.report;
   if (
@@ -367,7 +374,7 @@ const link = (from: string, to: string) =>
     .join('/');
 const label = (value: string) => value.replace(/[\\[\]`*_<>]/g, '\\$&');
 const cell = (value: string) => value.replaceAll('|', '\\|').replace(/\s+/g, ' ');
-export function renderIndex(index: TaskIndex): string {
+function indexMarkdown(index: TaskIndex, navigation: boolean): string {
   index.prds.sort((a, b) => a.prd.localeCompare(b.prd));
   const rows = index.prds
     .map(
@@ -378,8 +385,12 @@ export function renderIndex(index: TaskIndex): string {
   const history = index.history
     ? `\n[历史护栏维护与交付依据](history/index.md)：保留当时的候选、接受和验证范围，不计入 PRD 开发进度。\n`
     : '';
-  return `# PRD 成果索引\n\n每份 PRD 一个公共成果入口，只登记已验证并接受的开发能力。表中入口及成果数量不代表整份 PRD 已完成；当前需求与未完成项回到 PRD。个人进度、待接受草稿和维护收尾留在本人的工作记录。\n\n| PRD | 已接受成果 |\n| --- | --- |\n${rows}\n${history}\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
+  const heading = navigation
+    ? '# 任务资料与成果\n\n[需求、设计与候选](requirements.md)：按当前目标展开相关任务资料。'
+    : '# PRD 成果索引';
+  return `${heading}\n\n每份 PRD 一个公共成果入口，只登记已验证并接受的开发能力。表中入口及成果数量不代表整份 PRD 已完成；当前需求与未完成项回到 PRD。个人进度、待接受草稿和维护收尾留在本人的工作记录。\n\n| PRD | 已接受成果 |\n| --- | --- |\n${rows}\n${history}\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
 }
+export const renderIndex = (index: TaskIndex): string => indexMarkdown(index, true);
 function resultBody(result: PublicResult, path: string, privateDraft = false) {
   const links = result.evidence
     .map(
@@ -430,15 +441,16 @@ export async function checkReports(root: string, files: readonly string[]): Prom
     if (source !== null) linked.add(indexPath);
     for (const entry of index.prds) {
       const { book, details } = await readBook(root, entry.prd, index);
-      await checkedPath(root, book.prd);
-      if ((await optionalText(root, book.prd)) === null)
+      const current = resolveDocument(book.prd, await documentCatalog(root)).currentPath;
+      await checkedPath(root, current);
+      if ((await optionalText(root, current)) === null)
         throw new Error('WORK_REPORT_SOURCE: PRD missing');
       linked.add(entry.report.path);
       for (const path of Object.keys(details)) linked.add(path);
       for (const result of book.results)
         for (const evidence of result.evidence) linked.add(evidence.path);
     }
-    for (const file of files.filter((path) => path.startsWith('docs/tasks/'))) {
+    for (const file of files.filter((path) => path === indexPath || resultDocument(path))) {
       if (!linked.has(file)) throw new Error(`WORK_REPORT_ORPHAN: ${file}`);
     }
     return [];

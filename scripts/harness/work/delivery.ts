@@ -4,11 +4,14 @@ import { artifact, assess } from './context.ts';
 import { digest, json, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { commitDelivery, replayDelivery, requestDigest } from './delivery-store.ts';
+import { normsIssues } from './norms-review.ts';
+import { documentCatalog, requirementsPath, resolvePrd } from '../task-documents.ts';
 import {
   evidenceRoot,
   hashField,
   indexPath,
   loadBook,
+  optionalText,
   parseDraft,
   readBook,
   readDraft,
@@ -35,9 +38,20 @@ function fields(obj: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(obj).some((key) => !allowed.includes(key)))
     throw new Error('WORK_DELIVERY_REQUEST: unsupported field');
 }
-async function verified(root: string, task: Task, candidate?: string) {
+async function verified(root: string, task: Task, candidate?: string, publishing = false) {
+  if (publishing && (await optionalText(root, requirementsPath)) === null)
+    throw new Error(
+      `WORK_DELIVERY_NAVIGATION: create the real ${requirementsPath} navigation before publishing`,
+    );
+  if (
+    task.plan.result &&
+    resolvePrd(task.plan.result.prd, await documentCatalog(root)) !== task.plan.result.prd
+  )
+    throw new Error('WORK_RESULT: reconcile result.prd to its stable identity using work update');
   const assessment = await assess(root, task, false);
   if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
+  const normsErrors = await normsIssues(root, task.plan);
+  if (normsErrors.length) throw new Error(normsErrors.join('\n'));
   if (candidate !== undefined && assessment.candidate !== candidate)
     throw new Error('WORK_DELIVERY_STALE: candidate changed');
   if (assessment.evidence.some((entry) => entry.result !== 'pass'))
@@ -72,8 +86,13 @@ export async function deliver(root: string, id: string, rawRequest: string) {
     throw new Error('WORK_DELIVERY_REQUEST: action prepare or complete');
   const token = requestDigest(request);
   if (
-    await replayDelivery(root, id, token, async (restored) => {
-      await verified(root, restored, restored.checkpoint!.candidate);
+    await replayDelivery(root, id, token, async (restored, operation) => {
+      await verified(
+        root,
+        restored,
+        restored.checkpoint!.candidate,
+        operation.kind === 'complete' && !operation.done,
+      );
     })
   ) {
     const restored = (await loadTask(root, id)).task;
@@ -221,7 +240,7 @@ async function complete(
   const ref = task.delivery!.draft;
   if (!ref || request.draftSha256 !== ref.sha256)
     throw new Error('WORK_DELIVERY_STALE: prepare and review the current draft');
-  await verified(root, task, ref.candidate);
+  await verified(root, task, ref.candidate, true);
   const { draft, attachments } = await readDraft(root, task, ref.candidate);
   const acceptance = record(request.acceptance);
   fields(acceptance, ['candidate', 'statement', 'reference']);

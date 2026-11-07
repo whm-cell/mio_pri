@@ -38,6 +38,10 @@ export function markdownLinks(tree: MarkdownNode) {
 export function headingAnchors(tree: MarkdownNode) {
   const anchors = new Set<string>();
   const visit = (node: MarkdownNode): void => {
+    if (node.type === 'html') {
+      const match = /^<a id="([^"<>]+)">(?:<\/a>)?$/.exec(node.value?.trim() ?? '');
+      if (match) anchors.add(match[1]!);
+    }
     if (node.type === 'heading') {
       const base = nodeText(node)
         .toLowerCase()

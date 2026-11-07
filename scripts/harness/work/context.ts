@@ -6,6 +6,8 @@ import { checkedPath, deliveryPending, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
 import { deliveryOutput, readDraft } from './reports.ts';
 import { needsQualityReview, qualityCriterion, qualityReviewResult } from './quality-review.ts';
+import { documentCatalog, resolveDocument } from '../task-documents.ts';
+import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 
@@ -13,6 +15,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
   const config = await loadConfig(root);
   const scan = await inventory(root, config);
   if (scan.errors.length) throw new Error(scan.errors.join('\n'));
+  const catalog = await documentCatalog(root, config);
   const selected = new Set<string>();
   for (const [kind, paths] of [
     [
@@ -22,6 +25,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         ...task.plan.sources,
         ...(task.plan.requirement ? [task.plan.requirement.source] : []),
         ...(task.plan.result ? [task.plan.result.prd] : []),
+        ...(task.plan.norms?.paths ?? []),
       ],
     ],
     ['input', task.plan.inputs],
@@ -37,12 +41,19 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       const matches = scan.files.filter((file) => path === '.' || beneath(file, path));
       if (kind === 'source' && (!path.endsWith('.md') || !scan.files.includes(path)))
         throw new Error(`WORK_SOURCE: name an existing public Markdown file: ${path}`);
+      if (kind === 'source') resolveDocument(path, catalog);
       if (!matches.length && kind !== 'scope') throw new Error(`WORK_INPUT_MISSING: ${path}`);
       if (deliveryOutput(task, path) && kind === 'source')
         throw new Error('WORK_DELIVERY_INPUT: own delivery output cannot be a requirement/source');
       matches.forEach((file) => {
         if (!deliveryOutput(task, file)) selected.add(file);
       });
+      for (const entry of catalog.documents) {
+        const paths = [entry.identity, entry.path, ...(entry.aliases ?? [])];
+        if (!paths.some((file) => path === '.' || beneath(file, path))) continue;
+        paths.forEach((file) => selected.add(file));
+        selected.add('harness.config.json');
+      }
     }
   }
   const files: Record<string, string> = {};
@@ -63,6 +74,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     stopCondition: plan.stopCondition,
     ...(plan.requirement ? { requirement: plan.requirement } : {}),
     ...(plan.result ? { result: plan.result } : {}),
+    ...(plan.norms ? { norms: plan.norms } : {}),
     ...(task.delivery ? { deliveryVersion: task.delivery.version } : {}),
   };
   const contract = digest(json(contractPlan));
@@ -120,6 +132,7 @@ export async function artifact(root: string, id: string, path: string): Promise<
     !(path.startsWith('docs/') && path.endsWith('.md'))
   )
     throw new Error("WORK_ARTIFACT: use this task's evidence directory or a shared document");
+  if (path.startsWith('docs/tasks/')) resolveDocument(path, await documentCatalog(root));
   return readFile(await checkedPath(root, path));
 }
 
@@ -129,6 +142,7 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
   if (inspectDelivery && (await deliveryPending(root, task.plan.id)))
     errors.push('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
   const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
+  const normsErrors = await normsIssues(root, task.plan);
   const quality = task.plan.acceptance.find((item) => item.id === qualityCriterion.id);
   if ((qualityRequired && !quality) || (quality && quality.method !== qualityCriterion.method))
     errors.push(
@@ -169,6 +183,13 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
           } catch {
             result = 'invalid';
           }
+        } else if (criterion.id === normsCriterion.id) {
+          try {
+            if (normsReviewResult(bytes.toString('utf8'), task.plan, current) !== entry.result)
+              result = 'invalid';
+          } catch {
+            result = 'invalid';
+          }
         }
       } catch {
         result = 'missing';
@@ -191,6 +212,7 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
     inspectDelivery &&
     task.delivery?.version === 2 &&
     !errors.length &&
+    !normsErrors.length &&
     evidence.every((entry) => entry.result === 'pass') &&
     task.stage === 'C1_EVIDENCE_PENDING' &&
     task.reviewDecision === 'PENDING'
@@ -225,6 +247,13 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
       result:
         evidence.find((item) => item.criterion === qualityCriterion.id)?.result ??
         (qualityRequired ? 'unregistered' : 'not_required'),
+    },
+    normsReview: {
+      required: !!task.plan.result,
+      issues: normsErrors,
+      result:
+        evidence.find((item) => item.criterion === normsCriterion.id)?.result ??
+        (task.plan.result ? 'unregistered' : 'not_required'),
     },
     nextAction: task.plan.nextAction,
   };

@@ -6,6 +6,7 @@ import type { Task } from './records.ts';
 import { deliveryOutput, loadBook, reportPath, resultFiles } from './reports.ts';
 import { historicalPath, optionalText, parseReport } from './legacy-reports.ts';
 import { draft } from './records.ts';
+import { documentCatalog, resolveDocument } from '../task-documents.ts';
 
 /** A portable proposal plus candidate manifest; local authority and evidence never transfer implicitly. */
 export async function handoff(root: string, task: Task) {
@@ -35,6 +36,7 @@ export async function handoff(root: string, task: Task) {
       id: plan.id,
       ...(plan.requirement ? { requirement: plan.requirement } : {}),
       ...(plan.result ? { result: plan.result } : {}),
+      ...(plan.norms ? { norms: plan.norms } : {}),
       goal: plan.goal,
       scope: plan.scope,
       inputs: plan.inputs,
@@ -78,12 +80,18 @@ export async function receive(root: string, source: string, key?: string) {
     !source.endsWith('.md') ||
     (!source.startsWith('.work/inbox/') && !source.startsWith('docs/'))
   )
-    throw new Error('WORK_HANDOFF_PATH: retrieve the shared Markdown into .work/inbox/ or docs/');
+    throw new Error(
+      'WORK_HANDOFF_PATH: retrieve the shared Markdown into .work/inbox/ or a classified public document',
+    );
+  const catalog = await documentCatalog(root);
+  if (!source.startsWith('.work/inbox/')) resolveDocument(source, catalog);
   const markdown = await readFile(await checkedPath(root, source), 'utf8');
   if (source.startsWith('docs/tasks/complete/') && source.endsWith('/report.md')) {
     const { book } = await loadBook(markdown, (path) => optionalText(root, path));
     if (source !== reportPath(book.prd))
       throw new Error('WORK_REPORT_FORMAT: PRD/book location mismatch');
+    if (resolveDocument(book.prd, catalog).identity !== book.prd)
+      throw new Error('WORK_REPORT_BINDING: accepted PRD must remain a registry identity');
     const result =
       key === undefined && book.results.length === 1
         ? book.results[0]

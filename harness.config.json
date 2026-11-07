@@ -28,5 +28,24 @@
     ".npmrc",
     "cordis.patch.yml",
     ".editorconfig"
+  ],
+  "taskDocuments": [
+    {
+      "identity": "docs/prd-ai-drama-foundation.md",
+      "kind": "prd",
+      "path": "docs/tasks/ai-drama-foundation/prd.md",
+      "aliases": ["docs/prd-ai-drama-foundation.md"]
+    },
+    {
+      "identity": "docs/architecture-ai-drama-foundation.md",
+      "kind": "design",
+      "path": "docs/tasks/ai-drama-foundation/design.md",
+      "aliases": ["docs/architecture-ai-drama-foundation.md"]
+    },
+    {
+      "identity": "docs/tasks/ai-drama-foundation/auth-http-reuse-proposal.md",
+      "kind": "proposal",
+      "path": "docs/tasks/ai-drama-foundation/auth-http-reuse-proposal.md"
+    }
   ]
 }

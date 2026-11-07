@@ -16,6 +16,10 @@ import { guide, taskSummary } from './guide.ts';
 import { ensureTask, inspectTask, updateTask } from './manage.ts';
 import { deliver } from './delivery.ts';
 import { qualityCriterion, qualityReviewResult } from './quality-review.ts';
+import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.ts';
+import { inventory, loadConfig } from '../inventory.ts';
+import { inspectTaskDocuments } from '../task-documents.ts';
+import { checkDocuments } from '../check-documents.ts';
 import {
   checkedPath,
   digest,
@@ -37,6 +41,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   init <member>                         initialize this member's workspace
   start <task> <goal> [source.md ...]    legacy draft; complete via update before sync
   status                                list local tasks
+  documents                             list task identities, current paths, aliases and validation issues
   guide <action>                        read common rules and one action, without local records
   context <task> <action>               read current task summary, checks and one action
   check <task>                          read-only context/evidence assessment
@@ -64,6 +69,27 @@ async function main() {
   if (command === 'guide') {
     if (args.length !== 1) throw new Error(help);
     return console.log(json(await guide(root, args[0]!)));
+  }
+  if (command === 'documents') {
+    if (args.length) throw new Error(help);
+    const config = await loadConfig(root);
+    const scan = await inventory(root, config);
+    const registry = await inspectTaskDocuments(root, config);
+    const checked = await checkDocuments(root, scan.files, config);
+    const issues = [...new Set([...scan.errors, ...registry.errors, ...checked.errors])];
+    console.log(
+      json({
+        documents: registry.documents.map((entry) => ({
+          kind: entry.kind,
+          identity: entry.identity,
+          currentPath: entry.path,
+          aliases: entry.aliases ?? [],
+        })),
+        issues,
+      }),
+    );
+    if (issues.length) process.exitCode = 1;
+    return;
   }
   if (command === 'init') {
     if (args.length !== 1) throw new Error(help);
@@ -213,6 +239,14 @@ async function main() {
       qualityReviewResult(bytes.toString('utf8'), state.candidate) !== args[2]
     )
       throw new Error('WORK_QUALITY_EVIDENCE: declared result disagrees with review dimensions');
+    if (criterion.id === normsCriterion.id) {
+      const issues = await normsIssues(root, task.plan);
+      if (issues.length) throw new Error(issues.join('\n'));
+      if (
+        normsReviewResult(bytes.toString('utf8'), task.plan, await capture(root, task)) !== args[2]
+      )
+        throw new Error('WORK_NORMS_EVIDENCE: declared result disagrees with normative review');
+    }
     addEvidence(task, {
       criterion: criterion.id,
       method: criterion.method,

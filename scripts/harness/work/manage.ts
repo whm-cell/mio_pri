@@ -5,9 +5,12 @@ import { digest, draft, initializeMember, json, loadTask, parseTask, saveTask } 
 import type { Task, TaskPlan } from './records.ts';
 import { loadConfig } from '../inventory.ts';
 import { registerQualityReview } from './quality-review.ts';
+import { documentCatalog, resolveDocument, resolvePrd } from '../task-documents.ts';
+import { registerNormsReview } from './norms-review.ts';
 
 const planFields = [
   'result',
+  'norms',
   'goal',
   'scope',
   'inputs',
@@ -51,6 +54,15 @@ export async function ensureTask(root: string, raw: string) {
   const request = fields(JSON.parse(raw), ['requirement', 'plan']);
   const requirement = fields(request.requirement, ['source', 'section', 'key']);
   const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
+  const catalog = await documentCatalog(root);
+  if (typeof requirement.source === 'string')
+    requirement.source = resolveDocument(requirement.source, catalog).identity;
+  if (patch.result && typeof patch.result === 'object') {
+    const result = patch.result as Record<string, unknown>;
+    if (typeof result.prd === 'string') {
+      patch.result = { ...result, prd: resolvePrd(result.prd, catalog) };
+    }
+  }
   // Validate the complete shape before deriving an id or creating any private files.
   const proposed = draft(root, '', 'pending', '');
   Object.assign(proposed.plan, patch, { requirement });
@@ -67,6 +79,7 @@ export async function ensureTask(root: string, raw: string) {
   if (existing) {
     const compared = { ...existing.task.plan, ...patch };
     registerQualityReview(compared, await loadConfig(root));
+    registerNormsReview(compared);
     if (
       !isDeepStrictEqual(existing.task.plan.requirement, origin) ||
       Object.entries(patch).some(
@@ -88,6 +101,7 @@ export async function ensureTask(root: string, raw: string) {
   Object.assign(task.plan, patch, { requirement: origin });
   if (task.plan.result) task.delivery = { version: 2 };
   registerQualityReview(task.plan, await loadConfig(root));
+  registerNormsReview(task.plan);
   task.checkpoint = await capture(root, task);
   if (!contractIssues(task).length) task.stage = 'C0_READY';
   await saveTask(root, task);
@@ -105,6 +119,12 @@ export async function updateTask(root: string, id: string, raw: string) {
   )
     throw new Error('WORK_REQUEST: revision and a reconciliation reason are required');
   const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
+  if (patch.result && typeof patch.result === 'object') {
+    const result = patch.result as Record<string, unknown>;
+    if (typeof result.prd === 'string') {
+      patch.result = { ...result, prd: resolvePrd(result.prd, await documentCatalog(root)) };
+    }
+  }
   const task = loaded.task;
   if (request.revision !== digest(loaded.raw))
     throw new Error('WORK_CONFLICT: read the current context before updating');
@@ -127,6 +147,7 @@ export async function updateTask(root: string, id: string, raw: string) {
   }
   parseTask(json(task));
   registerQualityReview(task.plan, await loadConfig(root));
+  registerNormsReview(task.plan);
   const current = await capture(root, task);
   if (
     current.candidate !== task.checkpoint?.candidate ||

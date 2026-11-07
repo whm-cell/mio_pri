@@ -8,6 +8,14 @@ export interface HarnessConfig {
   privateRoots: string[];
   generatedRoots: string[];
   configurationFiles: string[];
+  taskDocuments?: TaskDocument[];
+}
+
+export interface TaskDocument {
+  identity: string;
+  kind: 'prd' | 'design' | 'proposal';
+  path: string;
+  aliases?: string[];
 }
 
 export const beneath = (path: string, root: string): boolean =>

@@ -9,6 +9,7 @@
 | dsh-alias-boundary-4e6a6d39e9923db1   | 生产 DSH 别名边界修复            | harness                                        | docs/foundation.md              | pending  | 无待接受报告                                                                         | 尚无接受结果 |
 | foundation-guardrails                 | TS 插件底座与基础护栏            | harness                                        | docs/foundation.md              | pending  | 无待接受报告                                                                         | 尚无接受结果 |
 | harness-layout-context                | 脚本职责与按动作读取             | harness                                        | docs/foundation.md              | pending  | 无待接受报告                                                                         | 尚无接受结果 |
+| natural-intent-entry-3081618733368d2f | 自然语言短句任务入口             | harness/work                                   | docs/coordination.md            | pending  | [待接受报告](pending/natural-intent-entry-3081618733368d2f/report.md) · 26736fd5955f | 尚无接受结果 |
 | prd-guardrail-replay-2a92e668befcb4a1 | PRD 驱动护栏流转验证（隔离演练） | development-coordination、guardrail-acceptance | docs/prd-ai-drama-foundation.md | pending  | [待接受报告](pending/prd-guardrail-replay-2a92e668befcb4a1/report.md) · fafcc6248122 | 尚无接受结果 |
 | task-delivery-87a50b174f7db211        | 任务验收报告、完成索引与重开恢复 | harness/work                                   | docs/coordination.md            | pending  | 无待接受报告                                                                         | 尚无接受结果 |
 | work-coordination                     | 团队任务记录协调                 | harness                                        | docs/foundation.md              | pending  | 无待接受报告                                                                         | 尚无接受结果 |
@@ -66,6 +67,20 @@
       ],
       "requirement": "docs/foundation.md",
       "status": "pending"
+    },
+    {
+      "id": "natural-intent-entry-3081618733368d2f",
+      "title": "自然语言短句任务入口",
+      "modules": [
+        "harness/work"
+      ],
+      "requirement": "docs/coordination.md",
+      "status": "pending",
+      "review": {
+        "path": "docs/tasks/pending/natural-intent-entry-3081618733368d2f/report.md",
+        "sha256": "7a0dd0a27d11be7665989aa5ba9af6fa69a9715389525e466b72c3213e72e6cd",
+        "candidate": "26736fd5955fa622d664e6b58bbdbf23336fbd5a0d8ee75164eb3aed58ae8363"
+      }
     },
     {
       "id": "prd-guardrail-replay-2a92e668befcb4a1",

@@ -4,7 +4,7 @@
 
 ## 团队任务协调
 
-- 用户用自然语言给出目标、决定和反馈；当前 Agent 按仓库协议从当前公共 PRD／规格形成执行任务，判断 C0/C1 与下一步，并维护本人 checkout/worktree 中忽略的 `.work/`。用户无需指定 Skills、执行命令、命名目录或编辑记录。
+- 用户只需说“继续当前任务”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)结合对话、公共 PRD／规格和实际记录定位任务、判断 C0/C1 并推进；仅澄清真正影响下一步的缺口。用户无需指定 Skills、ID、哈希、命令或长提示词；Agent 维护本人 checkout/worktree 中忽略的 `.work/`。
 - Agent 收到新目标先取 `pnpm work guide start`，按其中的拆解与生命周期说明选择任务，再用 `ensure --stdin` 初始化／复用记录；中断后先用 `status` 找到原任务，再取 `context <task> resume`。事实变化用带 revision 的 `update --stdin` 更新。仅展开当前动作；[协调协议](docs/coordination.md)和仓库命令可独立使用，不要求个人 Skills。
 - Agent 编辑前先建档、核对现场并进入 `C1_IMPLEMENTATION`；安装依赖、生成或其他命令型实施经 `work exec <task> -- <argv ...>` 检查后启动。编辑工具仍由 Agent 在写入前遵守同一条件，CLI 不拦截任意宿主写入。契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。团队需求、设计草案与跨人交接放团队可访问的来源；个人过程留在 `.work`。单任务只设一个写入者；代码写入冲突时隔离工作区。
 - 任务交付按 [任务索引](docs/tasks/index.md) 渐进查找；证据齐全后 deliver prepare 发布公共 pending 报告与索引入口，并显示待真实接受。Agent 交回任务、候选、报告链接和限制；收到针对该结果的接受后负责执行 complete，核对公共报告与索引落盘。开始新任务不自动接受旧结果；重开保留旧报告，不继承新候选通过。

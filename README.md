@@ -48,7 +48,7 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 ## 日常维护
 
-使用能读取仓库指令、编辑文件和运行命令的 Agent 时，成员只需说“按这份 PRD 推进”或“继续当前任务”。Agent 从 [开始任务](docs/coordination.md#开始任务) 取得拆解方法和 C0/C1 定义，再按动作建档、执行、验证与续接；成员无需指定 Skills、填写 ID 或编辑 JSON。协议与 CLI 随仓库提供；没有正在执行的 Agent 就不会自行推进。
+使用能读取仓库指令、编辑文件和运行命令的 Agent 时，成员只需说“按这份 PRD 推进”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)定位任务并推进当前阶段：未完成先实施，缺证先验证；已交回且仍匹配的结果收到明确完成请求后执行 complete。对象或接受含义确实不明时，只问必要的短问题，成员无需提供 ID、哈希、命令或长提示词。协议与 CLI 随仓库提供；没有正在执行的 Agent 就不会自行推进。
 
 开发脚本按职责分为 `scripts/harness/`（工程护栏与任务协调）和 `scripts/service/`（Profile、启动、产物 smoke）。目录归属与开发模块依赖均由 `harness.config.json` 声明；`pnpm check` 组合公共检查与服务装载验证，生产代码保持独立。
 

@@ -48,6 +48,7 @@ async function fixture(scope = ['src']) {
     requirement: { source: 'docs/api.md', section: 'API', key: 'quality' },
     plan: {
       goal: 'Change a fixture capability.',
+      result: { prd: 'docs/api.md', key: 'fixture-capability' },
       scope,
       inputs: ['src'],
       authorization: 'Fixture user authorizes local changes and checks.',
@@ -142,13 +143,7 @@ it('refuses missing or automated quality criteria and repairs legacy omission on
 
 it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and rejects rebinding an old original', async () => {
   const f = await fixture();
-  expect(
-    cli(f.root, ['deliver', f.id, '--stdin'], {
-      action: 'prepare',
-      revision: f.context().revision,
-    }).status,
-  ).toBe(0);
-  expect(cli(f.root, ['sync', f.id, 'Reconciled delivery outputs.']).status).toBe(0);
+  expect((await f.state()).delivery).toEqual({ version: 2 });
   expect(
     cli(f.root, ['run', f.id, 'checks', '--', process.execPath, '-e', 'console.log(1)']).status,
   ).toBe(0);

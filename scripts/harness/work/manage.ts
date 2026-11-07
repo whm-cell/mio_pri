@@ -3,11 +3,11 @@ import { assess, capture, contractIssues } from './context.ts';
 import { taskSummary } from './guide.ts';
 import { digest, draft, initializeMember, json, loadTask, parseTask, saveTask } from './records.ts';
 import type { Task, TaskPlan } from './records.ts';
-import { reopenDelivery, replayReopen } from './delivery.ts';
 import { loadConfig } from '../inventory.ts';
 import { registerQualityReview } from './quality-review.ts';
 
 const planFields = [
+  'result',
   'goal',
   'scope',
   'inputs',
@@ -86,6 +86,7 @@ export async function ensureTask(root: string, raw: string) {
     );
   const task = draft(root, actor, id, '');
   Object.assign(task.plan, patch, { requirement: origin });
+  if (task.plan.result) task.delivery = { version: 2 };
   registerQualityReview(task.plan, await loadConfig(root));
   task.checkpoint = await capture(root, task);
   if (!contractIssues(task).length) task.stage = 'C0_READY';
@@ -97,10 +98,6 @@ export async function ensureTask(root: string, raw: string) {
 export async function updateTask(root: string, id: string, raw: string) {
   const request = fields(JSON.parse(raw), ['revision', 'reason', 'plan', 'stage', 'reopen']);
   const loaded = await loadTask(root, id);
-  if (request.reopen === true && (await replayReopen(root, id, request))) {
-    const current = await loadTask(root, id);
-    return inspectTask(root, current.task, current.raw);
-  }
   if (
     typeof request.revision !== 'string' ||
     typeof request.reason !== 'string' ||
@@ -121,6 +118,13 @@ export async function updateTask(root: string, id: string, raw: string) {
     task.archived = false;
   }
   Object.assign(task.plan, patch);
+  if (task.plan.result && task.delivery?.version !== 2) {
+    if (task.delivery?.accepted)
+      task.notes.push(
+        `Previous v1 accepted result remains historical: ${task.delivery.accepted.path}; ${task.delivery.accepted.candidate}. No passes transfer to the new result contract.`,
+      );
+    task.delivery = { version: 2 };
+  }
   parseTask(json(task));
   registerQualityReview(task.plan, await loadConfig(root));
   const current = await capture(root, task);
@@ -145,7 +149,6 @@ export async function updateTask(root: string, id: string, raw: string) {
   }
   task.notes.push(`${new Date().toISOString()} ${request.reason}`);
   // Contract edits invalidate the old checkpoint; only an explicit sync acknowledges the diff.
-  if (request.reopen) await reopenDelivery(root, task, loaded.raw, request);
-  else await saveTask(root, task, loaded.raw);
+  await saveTask(root, task, loaded.raw);
   return inspectTask(root, task, json(task));
 }

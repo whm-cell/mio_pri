@@ -21,6 +21,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         ...requiredSources,
         ...task.plan.sources,
         ...(task.plan.requirement ? [task.plan.requirement.source] : []),
+        ...(task.plan.result ? [task.plan.result.prd] : []),
       ],
     ],
     ['input', task.plan.inputs],
@@ -37,10 +38,10 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       if (kind === 'source' && (!path.endsWith('.md') || !scan.files.includes(path)))
         throw new Error(`WORK_SOURCE: name an existing public Markdown file: ${path}`);
       if (!matches.length && kind !== 'scope') throw new Error(`WORK_INPUT_MISSING: ${path}`);
-      if (task.delivery && deliveryOutput(task.plan.id, path) && kind === 'source')
+      if (deliveryOutput(task, path) && kind === 'source')
         throw new Error('WORK_DELIVERY_INPUT: own delivery output cannot be a requirement/source');
       matches.forEach((file) => {
-        if (!task.delivery || !deliveryOutput(task.plan.id, file)) selected.add(file);
+        if (!deliveryOutput(task, file)) selected.add(file);
       });
     }
   }
@@ -61,7 +62,8 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     dependencies: plan.dependencies,
     stopCondition: plan.stopCondition,
     ...(plan.requirement ? { requirement: plan.requirement } : {}),
-    ...(task.delivery ? { deliveryVersion: 1 } : {}),
+    ...(plan.result ? { result: plan.result } : {}),
+    ...(task.delivery ? { deliveryVersion: task.delivery.version } : {}),
   };
   const contract = digest(json(contractPlan));
   const git = (args: string[]) => {
@@ -187,6 +189,7 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
   let draftIssue: string | null = null;
   if (
     inspectDelivery &&
+    task.delivery?.version === 2 &&
     !errors.length &&
     evidence.every((entry) => entry.result === 'pass') &&
     task.stage === 'C1_EVIDENCE_PENDING' &&

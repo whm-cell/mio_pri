@@ -3,7 +3,8 @@ import { dirname } from 'node:path';
 import { capture, contractIssues } from './context.ts';
 import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
-import { deliveryOutput, parseReport, reportPath } from './reports.ts';
+import { deliveryOutput, parseBook, reportPath, resultFiles } from './reports.ts';
+import { historicalPath, optionalText, parseReport } from './legacy-reports.ts';
 import { draft } from './records.ts';
 
 /** A portable proposal plus candidate manifest; local authority and evidence never transfer implicitly. */
@@ -28,11 +29,12 @@ export async function handoff(root: string, task: Task) {
     releaseDisposition: 'HOLD_FOR_EVIDENCE',
     evidence: [],
     archived: false,
-    ...(task.delivery ? { delivery: { version: 1 as const } } : {}),
+    ...(task.delivery ? { delivery: { version: task.delivery.version } } : {}),
     checkpoint: task.checkpoint,
     plan: {
       id: plan.id,
       ...(plan.requirement ? { requirement: plan.requirement } : {}),
+      ...(plan.result ? { result: plan.result } : {}),
       goal: plan.goal,
       scope: plan.scope,
       inputs: plan.inputs,
@@ -71,7 +73,7 @@ export async function handoff(root: string, task: Task) {
   return path;
 }
 
-export async function receive(root: string, source: string) {
+export async function receive(root: string, source: string, key?: string) {
   if (
     !source.endsWith('.md') ||
     (!source.startsWith('.work/inbox/') && !source.startsWith('docs/'))
@@ -79,8 +81,50 @@ export async function receive(root: string, source: string) {
     throw new Error('WORK_HANDOFF_PATH: retrieve the shared Markdown into .work/inbox/ or docs/');
   const markdown = await readFile(await checkedPath(root, source), 'utf8');
   if (source.startsWith('docs/tasks/complete/') && source.endsWith('/report.md')) {
+    const book = parseBook(markdown);
+    if (source !== reportPath(book.prd))
+      throw new Error('WORK_REPORT_FORMAT: PRD/book location mismatch');
+    const result =
+      key === undefined && book.results.length === 1
+        ? book.results[0]
+        : book.results.find((entry) => entry.key === key);
+    if (!result)
+      throw new Error(
+        `WORK_RESULT_SELECTION: select one result key: ${book.results.map((entry) => entry.key).join(', ')}`,
+      );
+    await resultFiles(root, result);
+    const id = `${result.key.slice(0, 48)}-${digest(json([book.prd, result.key])).slice(0, 16)}`;
+    const task = draft(root, await member(root), id, result.title);
+    task.plan.result = { prd: book.prd, key: result.key };
+    task.plan.sources = [book.prd];
+    task.plan.acceptance = result.criteria;
+    task.plan.sharedRef = `${source}#${result.key}`;
+    task.plan.nextAction =
+      'Define the current scope, authorization and dependencies, inspect differences, then sync and verify; no historical passes transfer.';
+    task.delivery = {
+      version: 2,
+      accepted: {
+        path: source,
+        key: result.key,
+        sha256: digest(json(result)),
+        candidate: result.version.candidate,
+      },
+    };
+    const changed: string[] = [];
+    for (const [path, expected] of Object.entries(result.version.files)) {
+      const current = await optionalText(root, path);
+      if (current === null || digest(current) !== expected) changed.push(path);
+    }
+    task.notes.push(
+      `Recovered accepted result ${source}#${result.key}; tested ${result.version.candidate}. Differences among the historical manifest paths: ${changed.join(', ') || 'none'}. This comparison does not discover new files outside that manifest. Scope, authority, checkpoint and passing originals must be established locally.`,
+    );
+    await saveTask(root, task);
+    return task;
+  }
+  if (source.startsWith('docs/tasks/history/complete/') && source.endsWith('/report.md')) {
     const report = parseReport(markdown);
-    if (source !== reportPath(report.id))
+    const original = `docs/tasks/complete/${report.id}/report.md`;
+    if (source !== historicalPath(original))
       throw new Error('WORK_REPORT_FORMAT: task/report location mismatch');
     for (const entry of report.evidence) {
       const bytes = await readFile(await checkedPath(root, `${dirname(source)}/${entry.path}`));
@@ -95,15 +139,18 @@ export async function receive(root: string, source: string) {
     });
     task.delivery = {
       version: 1,
-      accepted: { path: source, sha256: digest(markdown), candidate: report.checkpoint.candidate },
+      accepted: {
+        path: original,
+        sha256: digest(markdown),
+        candidate: report.checkpoint.candidate,
+      },
     };
     const current = await capture(root, task);
     const changed = [
       ...new Set([...Object.keys(current.files), ...Object.keys(report.checkpoint.files)]),
     ].filter(
       (path) =>
-        current.files[path] !== report.checkpoint.files[path] &&
-        !deliveryOutput(task.plan.id, path),
+        current.files[path] !== report.checkpoint.files[path] && !deliveryOutput(task, path),
     );
     task.notes.push(
       `Recovered accepted report ${source} (${digest(markdown)}), tested ${report.checkpoint.candidate}; changed inputs: ${changed.join(', ') || 'none'}. Inspect current requirements and authority; no passes inherited.`,

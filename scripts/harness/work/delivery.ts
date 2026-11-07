@@ -1,27 +1,27 @@
 import { spawnSync } from 'node:child_process';
 import { format } from 'prettier';
-import { artifact, assess, capture } from './context.ts';
-import { digest, json, loadTask, saveTask } from './records.ts';
+import { artifact, assess } from './context.ts';
+import { digest, json, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { commitDelivery, replayDelivery, requestDigest } from './delivery-store.ts';
 import {
+  evidenceRoot,
   hashField,
   indexPath,
-  optionalText,
-  parseReport,
+  parseBook,
+  parseDraft,
+  readBook,
   readDraft,
   readIndex,
   record,
+  renderBook,
+  renderDraft,
   renderIndex,
-  renderReport,
   reportPath,
-  reportRoot,
-  reviewFiles,
-  reviewPath,
-  reviewRoot,
+  resultFiles,
   textField,
 } from './reports.ts';
-import type { Report, SharedEvidence } from './reports.ts';
+import type { PublicResult, SharedEvidence } from './reports.ts';
 
 export const markdown = (text: string) => format(text, { parser: 'markdown', printWidth: 100 });
 function publicText(text: string) {
@@ -33,7 +33,6 @@ function fields(obj: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(obj).some((key) => !allowed.includes(key)))
     throw new Error('WORK_DELIVERY_REQUEST: unsupported field');
 }
-
 async function verified(root: string, task: Task, candidate?: string) {
   const assessment = await assess(root, task, false);
   if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
@@ -46,6 +45,14 @@ async function verified(root: string, task: Task, candidate?: string) {
 
 export async function deliver(root: string, id: string, rawRequest: string) {
   const { task, raw } = await loadTask(root, id);
+  if (!task.plan.result)
+    throw new Error(
+      'WORK_DELIVERY_RESULT: public complete requires an explicit PRD development result; maintenance stays local and may archive after checking',
+    );
+  if (task.delivery?.version !== 2)
+    throw new Error(
+      'WORK_DELIVERY_LEGACY: use update to reconcile plan.result and upgrade the private delivery contract; v1 operations cannot publish new task packages',
+    );
   const request = record(JSON.parse(rawRequest));
   fields(request, [
     'action',
@@ -63,46 +70,25 @@ export async function deliver(root: string, id: string, rawRequest: string) {
     throw new Error('WORK_DELIVERY_REQUEST: action prepare or complete');
   const token = requestDigest(request);
   if (
-    await replayDelivery(root, id, token, async (task) => {
-      await verified(root, task, task.checkpoint!.candidate);
+    await replayDelivery(root, id, token, async (restored) => {
+      await verified(root, restored, restored.checkpoint!.candidate);
     })
   ) {
-    if (request.action === 'complete')
-      return { completed: true, replayed: true, report: reportPath(id) };
-    const restored = await loadTask(root, id);
-    const draft = restored.task.delivery!.draft!;
-    return {
-      replayed: true,
-      readyForAcceptance: true,
-      revision: digest(restored.raw),
-      draft,
-      review: { path: reviewPath(id), sha256: draft.sha256, candidate: draft.candidate },
-    };
+    const restored = (await loadTask(root, id)).task;
+    return request.action === 'complete'
+      ? { completed: true, replayed: true, report: restored.delivery!.accepted }
+      : {
+          replayed: true,
+          readyForAcceptance: true,
+          revision: digest(json(restored)),
+          draft: restored.delivery!.draft,
+        };
   }
   if (request.revision !== digest(raw)) throw new Error('WORK_CONFLICT: read current revision');
   if (task.archived) throw new Error('WORK_ARCHIVED: reopen before delivery');
-  if (!task.delivery) {
-    if (request.action !== 'prepare')
-      throw new Error('WORK_DELIVERY_DISABLED: prepare before collecting evidence');
-    const before = await assess(root, task);
-    if (!before.ready) throw new Error(before.errors.join('\n'));
-    task.delivery = { version: 1 };
-    task.stage = 'C1_EVIDENCE_PENDING';
-    task.reviewDecision = 'PENDING';
-    task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
-    task.notes.push(
-      'Enabled fixed delivery outputs. Reconcile the new candidate and collect matching evidence.',
-    );
-    await saveTask(root, task, raw);
-    return {
-      enabled: true,
-      revision: digest(json(task)),
-      candidate: (await capture(root, task)).candidate,
-      nextAction: 'Inspect and sync the changed contract, then collect evidence and prepare again.',
-    };
-  }
-  if (request.action === 'prepare') return prepare(root, task, raw, request, token);
-  return complete(root, task, raw, request, token);
+  return request.action === 'prepare'
+    ? prepare(root, task, raw, request, token)
+    : complete(root, task, raw, request, token);
 }
 
 async function prepare(
@@ -112,18 +98,15 @@ async function prepare(
   request: Record<string, unknown>,
   token: string,
 ) {
-  if (!task.plan.requirement && !task.plan.sources.length)
-    throw new Error('WORK_DELIVERY_SOURCE: name a public requirement or source before preparing');
   await verified(root, task);
-  const modules = request.modules;
-  if (!Array.isArray(modules) || !modules.length)
+  if (!Array.isArray(request.modules) || !request.modules.length)
     throw new Error('WORK_DELIVERY_REQUEST: modules required');
-  const evidence = request.evidence;
-  if (!Array.isArray(evidence) || evidence.length !== task.plan.acceptance.length)
+  if (!Array.isArray(request.evidence) || request.evidence.length !== task.plan.acceptance.length)
     throw new Error('WORK_DELIVERY_REQUEST: choose one shared artifact per criterion');
-  const attachments: Record<string, string> = {};
+  const directory = `.work/tasks/${task.plan.id}/delivery`;
+  const outputs: Record<string, string> = {};
   const shared: SharedEvidence[] = [];
-  for (const value of evidence) {
+  for (const value of request.evidence) {
     const selected = record(value);
     fields(selected, ['criterion', 'representation', 'text']);
     const criterion = textField(selected.criterion);
@@ -153,109 +136,67 @@ async function prepare(
     const content = await markdown(
       `# ${criterion}\n\nRepresentation: ${representation}; original SHA256: ${original.sha256}.\n\n${fence}text\n${text}\n${fence}\n`,
     );
-    const path = `evidence/${criterion}.md`;
-    attachments[path] = content;
+    outputs[`${directory}/evidence/${criterion}.md`] = content;
     shared.push({
       criterion,
       method: original.method,
       representation: representation as SharedEvidence['representation'],
       sourceSha256: original.sha256,
-      path,
+      path: `${evidenceRoot(task.plan.result!)}/${criterion}.md`,
       sha256: digest(content),
       environment: original.environment,
     });
   }
-  const p = task.plan;
-  const report: Report = {
-    version: 1,
-    id: p.id,
-    title: textField(request.title),
-    author: task.member,
-    modules: modules.map(textField),
-    outcomes: textField(request.outcomes),
-    decisions: textField(request.decisions),
-    limitations: textField(request.limitations),
-    checkpoint: task.checkpoint!,
-    contract: {
-      ...(p.requirement ? { requirement: p.requirement } : {}),
-      goal: p.goal,
-      scope: p.scope,
-      inputs: p.inputs,
-      sources: p.sources,
-      nonGoals: p.nonGoals,
-      acceptance: p.acceptance,
-      decisions: p.decisions,
-      dependencies: p.dependencies,
+  const { candidate, head, files, contract } = task.checkpoint!;
+  const draft = {
+    version: 2 as const,
+    prd: task.plan.result!.prd,
+    result: {
+      key: task.plan.result!.key,
+      title: textField(request.title),
+      modules: request.modules.map(textField),
+      outcomes: textField(request.outcomes),
+      decisions: textField(request.decisions),
+      limitations: textField(request.limitations),
+      version: { candidate, head, files, contract },
+      criteria: task.plan.acceptance,
+      evidence: shared,
     },
-    evidence: shared,
   };
-  const source = publicText(await markdown(renderReport(report)));
-  parseReport(source, false);
-  const directory = `.work/tasks/${p.id}/delivery`;
+  const source = publicText(await markdown(renderDraft(draft)));
+  parseDraft(source);
   const path = `${directory}/draft.md`;
-  const { index, source: indexBefore } = await readIndex(root);
-  const existing = index.tasks.find((entry) => entry.id === p.id);
-  const previous = await reviewFiles(root, p.id, existing?.review);
-  const outputs: Record<string, string | null> = Object.fromEntries(
-    Object.keys(previous).map((name) => [name, null]),
-  );
-  const expected: Record<string, string | null> = { ...previous, [indexPath]: indexBefore };
-  for (const [name, content] of Object.entries({ ...attachments, 'report.md': source })) {
-    const sharedPath = `${reviewRoot(p.id)}/${name}`;
-    outputs[sharedPath] = content;
-    if (!(sharedPath in expected)) expected[sharedPath] = null;
-    outputs[name === 'report.md' ? path : `${directory}/${name}`] = content;
-  }
-  const review = {
-    path: reviewPath(p.id),
-    sha256: digest(source),
-    candidate: report.checkpoint.candidate,
-  };
-  index.tasks = index.tasks
-    .filter((entry) => entry.id !== p.id)
-    .concat({
-      id: p.id,
-      title: report.title,
-      modules: report.modules,
-      requirement: p.requirement?.source ?? p.sources.join(', '),
-      status: existing?.report ? 'reopened' : 'pending',
-      ...(existing?.report ? { report: existing.report } : {}),
-      review,
-    });
-  outputs[indexPath] = await markdown(renderIndex(index));
-  task.delivery!.draft = { path, sha256: digest(source), candidate: report.checkpoint.candidate };
+  outputs[path] = source;
+  task.delivery!.draft = { path, sha256: digest(source), candidate };
   task.reviewDecision = 'PENDING';
   task.stage = 'C1_EVIDENCE_PENDING';
   task.releaseDisposition = 'HOLD_FOR_HUMAN_REVIEW';
-  task.notes.push(`Prepared delivery draft ${digest(source)}; acceptance remains pending.`);
-  await commitDelivery(root, task, raw, token, 'prepare', outputs, expected);
-  return {
-    revision: digest(json(task)),
-    draft: task.delivery!.draft,
-    review,
-    readyForAcceptance: true,
-  };
+  task.notes.push(`Prepared private result draft ${digest(source)}; acceptance remains pending.`);
+  await commitDelivery(root, task, raw, token, 'prepare', outputs, {});
+  return { revision: digest(json(task)), draft: task.delivery!.draft, readyForAcceptance: true };
 }
 
-async function preservePrevious(root: string, id: string, old: string | null) {
-  if (old === null) return;
-  const report = parseReport(old);
-  // HEAD must preserve the entire previous package; a local uncommitted report is not history.
-  for (const [path, expected] of [
-    [reportPath(id), digest(old)],
-    ...report.evidence.map((entry) => [`${reportRoot(id)}/${entry.path}`, entry.sha256]),
-  ] as [string, string][]) {
-    const result = spawnSync('git', ['show', `HEAD:${path}`], {
+async function preservePrevious(root: string, prd: string, previous: PublicResult) {
+  const path = reportPath(prd);
+  const result = spawnSync('git', ['show', `HEAD:${path}`], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  let saved: PublicResult | undefined;
+  if (result.status === 0)
+    saved = parseBook(result.stdout).results.find((entry) => entry.key === previous.key);
+  if (!saved || json(saved) !== json(previous))
+    throw new Error(
+      `WORK_DELIVERY_HISTORY: commit the previous accepted result before replacing ${previous.key}`,
+    );
+  for (const evidence of previous.evidence) {
+    const bytes = spawnSync('git', ['show', `HEAD:${evidence.path}`], {
       cwd: root,
       maxBuffer: 16 * 1024 * 1024,
     });
-    if (result.status !== 0 || digest(result.stdout) !== expected)
-      throw new Error(
-        `WORK_DELIVERY_HISTORY: commit the previous accepted package before replacing ${path}`,
-      );
-    const current = await optionalText(root, path);
-    if (current === null || digest(current) !== expected)
-      throw new Error(`WORK_DELIVERY_CONFLICT: previous artifact changed ${path}`);
+    if (bytes.status !== 0 || digest(bytes.stdout) !== evidence.sha256)
+      throw new Error(`WORK_DELIVERY_HISTORY: preserve previous evidence ${evidence.path}`);
   }
 }
 
@@ -270,102 +211,62 @@ async function complete(
   if (!ref || request.draftSha256 !== ref.sha256)
     throw new Error('WORK_DELIVERY_STALE: prepare and review the current draft');
   await verified(root, task, ref.candidate);
-  const { report, attachments, index, indexBefore, pending } = await readDraft(
-    root,
-    task,
-    ref.candidate,
-  );
+  const { draft, attachments } = await readDraft(root, task, ref.candidate);
   const acceptance = record(request.acceptance);
   fields(acceptance, ['candidate', 'statement', 'reference']);
-  if (hashField(acceptance.candidate) !== report.checkpoint.candidate)
+  if (hashField(acceptance.candidate) !== draft.result.version.candidate)
     throw new Error('WORK_DELIVERY_ACCEPTANCE: candidate mismatch');
-  report.acceptance = {
+  draft.result.acceptance = {
     candidate: acceptance.candidate as string,
     statement: textField(acceptance.statement),
     reference: textField(acceptance.reference),
   };
-  const outputs: Record<string, string | null> = {};
-  for (const [path, content] of Object.entries(attachments))
-    outputs[`${reportRoot(task.plan.id)}/${path}`] = publicText(content);
-  const previous = await optionalText(root, reportPath(task.plan.id));
-  await preservePrevious(root, task.plan.id, previous);
-  if (previous !== null)
-    for (const entry of parseReport(previous).evidence) {
-      const path = `${reportRoot(task.plan.id)}/${entry.path}`;
-      if (!(path in outputs)) outputs[path] = null;
+  const { index, source: indexBefore } = await readIndex(root);
+  const { book, source: bookBefore } = await readBook(root, draft.prd, index);
+  const previous = book.results.find((entry) => entry.key === draft.result.key);
+  const previousFiles = previous ? await resultFiles(root, previous) : {};
+  if (previous && json(previous) !== json(draft.result))
+    await preservePrevious(root, draft.prd, previous);
+  const outputs: Record<string, string | null> = { ...attachments };
+  const expected: Record<string, string | null> = {};
+  for (const path of Object.keys(attachments)) expected[path] = previousFiles[path] ?? null;
+  for (const [path, content] of Object.entries(previousFiles)) {
+    if (!(path in outputs) && path.startsWith(`${evidenceRoot(task.plan.result!)}/`)) {
+      outputs[path] = null;
+      expected[path] = content;
     }
-  const publicReport = publicText(await markdown(renderReport(report)));
-  outputs[reportPath(task.plan.id)] = publicReport;
-  const existing = index.tasks.find((entry) => entry.id === task.plan.id);
-  for (const path of Object.keys(pending)) outputs[path] = null;
-  if (
-    (previous === null && existing?.report) ||
-    (previous !== null && existing?.report?.sha256 !== digest(previous))
-  )
-    throw new Error('WORK_DELIVERY_CONFLICT: index/previous report mismatch');
+  }
+  book.results = book.results
+    .filter((entry) => entry.key !== draft.result.key)
+    .concat(draft.result);
+  book.results.sort((a, b) => a.key.localeCompare(b.key));
+  const path = reportPath(draft.prd);
+  const source = publicText(await markdown(renderBook(book)));
+  parseBook(source);
+  outputs[path] = source;
+  expected[path] = bookBefore;
+  index.prds = index.prds
+    .filter((entry) => entry.prd !== draft.prd)
+    .concat({ prd: draft.prd, report: { path, sha256: digest(source) } });
+  outputs[indexPath] = publicText(await markdown(renderIndex(index)));
+  expected[indexPath] = indexBefore;
   const accepted = {
-    path: reportPath(task.plan.id),
-    sha256: digest(publicReport),
-    candidate: report.checkpoint.candidate,
+    path,
+    key: draft.result.key,
+    sha256: digest(json(draft.result)),
+    candidate: draft.result.version.candidate,
   };
-  const entry = {
-    id: task.plan.id,
-    title: report.title,
-    modules: report.modules,
-    requirement: task.plan.requirement?.source ?? task.plan.sources.join(', '),
-    status: 'complete' as const,
-    report: accepted,
-  };
-  index.tasks = index.tasks.filter((item) => item.id !== task.plan.id).concat(entry);
-  outputs[indexPath] = await markdown(renderIndex(index));
   task.delivery!.accepted = accepted;
   task.stage = 'C1_RELEASED';
   task.reviewDecision = 'ACCEPT';
   task.releaseDisposition = 'RELEASED';
-  task.plan.sharedRef = accepted.path;
-  task.notes.push(`Accepted ${accepted.candidate}; ${report.acceptance.reference}`);
-  await commitDelivery(root, task, raw, token, 'complete', outputs, {
-    ...pending,
-    [indexPath]: indexBefore,
-    [reportPath(task.plan.id)]: previous,
-  });
+  task.plan.sharedRef = `${path}#${accepted.key}`;
+  task.notes.push(`Accepted ${accepted.candidate}; ${draft.result.acceptance.reference}`);
+  await commitDelivery(root, task, raw, token, 'complete', outputs, expected);
   return {
     completed: true,
     revision: digest(json(task)),
     report: accepted,
     files: Object.keys(outputs),
   };
-}
-
-export async function reopenDelivery(root: string, task: Task, raw: string, request: unknown) {
-  const { index, source: indexBefore } = await readIndex(root);
-  const entry = index.tasks.find((item) => item.id === task.plan.id);
-  if (!entry?.report) {
-    await saveTask(root, task, raw);
-    return;
-  }
-  const source = await optionalText(root, entry.report.path);
-  if (source === null || digest(source) !== entry.report.sha256)
-    throw new Error('WORK_DELIVERY_CONFLICT: reconcile last accepted report');
-  entry.status = 'reopened';
-  await commitDelivery(
-    root,
-    task,
-    raw,
-    requestDigest(request),
-    'reopen',
-    {
-      [indexPath]: await markdown(renderIndex(index)),
-    },
-    { [indexPath]: indexBefore },
-  );
-}
-
-export async function replayReopen(root: string, id: string, request: unknown) {
-  return replayDelivery(root, id, requestDigest(request), async (task, operation) => {
-    const current = await capture(root, task);
-    // A reopen may change the plan; compare file bytes, not the previous contract.
-    if (json(current.files) !== json(operation.inputs))
-      throw new Error('WORK_DELIVERY_STALE: inputs changed during reopen; reconcile operation');
-  });
 }

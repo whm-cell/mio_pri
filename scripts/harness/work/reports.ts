@@ -1,246 +1,260 @@
 import { readFile } from 'node:fs/promises';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
-import { checkedPath, digest, draft, identifier, json, parseTask } from './records.ts';
+import { dirname, relative } from 'node:path';
+import { format } from 'prettier';
+import {
+  checkedPath,
+  digest,
+  draft,
+  identifier,
+  json,
+  methods,
+  parseTask,
+  resultBookPath,
+} from './records.ts';
 import type { Checkpoint, Task, TaskPlan } from './records.ts';
+import {
+  hashField,
+  legacyFiles,
+  metadata,
+  optionalText,
+  record,
+  textArray,
+  textField,
+} from './legacy-reports.ts';
+import type { SharedEvidence } from './legacy-reports.ts';
 
+export { hashField, metadata, optionalText, record, textField } from './legacy-reports.ts';
+export type { SharedEvidence } from './legacy-reports.ts';
 export const indexPath = 'docs/tasks/index.md';
-export const reportPath = (id: string) => `docs/tasks/complete/${identifier(id)}/report.md`;
-export const reportRoot = (id: string) => `docs/tasks/complete/${identifier(id)}`;
-export const reviewRoot = (id: string) => `docs/tasks/pending/${identifier(id)}`;
-export const reviewPath = (id: string) => `${reviewRoot(id)}/report.md`;
-export const deliveryOutput = (id: string, path: string) =>
-  path === indexPath ||
-  path.startsWith(`${reportRoot(id)}/`) ||
-  path.startsWith(`${reviewRoot(id)}/`);
+export const reportPath = resultBookPath;
+const reportRoot = (prd: string) => dirname(reportPath(prd));
+export const evidenceRoot = (result: NonNullable<TaskPlan['result']>) =>
+  `${reportRoot(result.prd)}/evidence/${identifier(result.key)}`;
 
-export interface SharedEvidence {
-  criterion: string;
-  method: string;
-  representation: 'original' | 'redacted' | 'excerpt';
-  sourceSha256: string;
-  path: string;
-  sha256: string;
-  environment: string;
+/** The book is navigation; sibling results' actual evidence remains an ordinary input. */
+export function deliveryOutput(task: Task, path: string) {
+  if (task.delivery?.version === 1)
+    return (
+      path === indexPath ||
+      path.startsWith(`docs/tasks/complete/${task.plan.id}/`) ||
+      path.startsWith(`docs/tasks/pending/${task.plan.id}/`)
+    );
+  const target = task.plan.result;
+  return (
+    !!target &&
+    (path === indexPath ||
+      path === reportPath(target.prd) ||
+      path.startsWith(`${evidenceRoot(target)}/`))
+  );
 }
-export interface Report {
-  version: 1;
-  id: string;
+export interface PublicResult {
+  key: string;
   title: string;
-  author: string;
   modules: string[];
   outcomes: string;
   decisions: string;
   limitations: string;
-  checkpoint: Checkpoint;
-  contract: Pick<
-    TaskPlan,
-    | 'requirement'
-    | 'goal'
-    | 'scope'
-    | 'inputs'
-    | 'sources'
-    | 'nonGoals'
-    | 'acceptance'
-    | 'decisions'
-    | 'dependencies'
-  >;
+  version: Omit<Checkpoint, 'branch'>;
+  criteria: TaskPlan['acceptance'];
   evidence: SharedEvidence[];
   acceptance?: { candidate: string; statement: string; reference: string };
 }
-export interface IndexEntry {
-  id: string;
-  title: string;
-  modules: string[];
-  requirement: string;
-  status: 'pending' | 'complete' | 'reopened';
-  report?: { path: string; sha256: string; candidate: string };
-  review?: { path: string; sha256: string; candidate: string };
+export interface ResultBook {
+  version: 2;
+  prd: string;
+  results: PublicResult[];
 }
 export interface TaskIndex {
-  version: 1;
-  tasks: IndexEntry[];
+  version: 2;
+  prds: { prd: string; report: { path: string; sha256: string } }[];
+  history?: { path: string; sha256: string };
+}
+export interface ResultDraft {
+  version: 2;
+  prd: string;
+  result: PublicResult;
+}
+function fields(obj: object, allowed: string[]) {
+  if (Object.keys(obj).some((key) => !allowed.includes(key)))
+    throw new Error('WORK_REPORT_FORMAT: unsupported field');
 }
 
-interface MarkdownNode {
-  type: string;
-  lang?: string;
-  value?: string;
-  children?: MarkdownNode[];
-}
-export function metadata(source: string, language: string): unknown {
-  const tree = unified().use(remarkParse).parse(source) as MarkdownNode;
-  const blocks =
-    tree.children?.filter((node) => node.type === 'code' && node.lang === language) ?? [];
-  if (blocks.length !== 1) throw new Error(`WORK_REPORT_FORMAT: expected one ${language} block`);
-  return JSON.parse(blocks[0]!.value!);
-}
-export function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('WORK_REPORT_FORMAT: expected object');
-  return value as Record<string, unknown>;
-}
-export function textField(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim())
-    throw new Error('WORK_REPORT_FORMAT: expected nonempty text');
-  return value;
-}
-export function hashField(value: unknown): string {
-  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value))
-    throw new Error('WORK_REPORT_FORMAT: expected SHA256');
-  return value;
-}
-function textArray(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new Error('WORK_REPORT_FORMAT: expected text array');
-  return value.map(textField);
-}
-
-export function parseReport(source: string, accepted = true): Report {
-  const obj = record(metadata(source, 'mio-task-report'));
-  if (obj.version !== 1) throw new Error('WORK_REPORT_FORMAT: report version');
-  const report = obj as unknown as Report;
-  identifier(textField(report.id));
-  for (const field of ['title', 'author', 'outcomes', 'decisions', 'limitations'] as const)
-    textField(report[field]);
-  textArray(report.modules);
-  const task = draft('', '', report.id, '');
-  Object.assign(task.plan, record(report.contract));
-  task.checkpoint = report.checkpoint;
-  if (!task.checkpoint) throw new Error('WORK_REPORT_FORMAT: checkpoint required');
+function parseResult(value: unknown, prd: string, accepted: boolean): PublicResult {
+  const result = record(value) as unknown as PublicResult;
+  fields(result, [
+    'key',
+    'title',
+    'modules',
+    'outcomes',
+    'decisions',
+    'limitations',
+    'version',
+    'criteria',
+    'evidence',
+    'acceptance',
+  ]);
+  identifier(textField(result.key));
+  for (const key of ['title', 'outcomes', 'decisions', 'limitations'] as const)
+    textField(result[key]);
+  textArray(result.modules);
+  const version = record(result.version);
+  fields(version, ['candidate', 'head', 'files', 'contract']);
+  const task = draft('', '', 'public-result', '');
+  task.plan.result = { prd, key: result.key };
+  task.plan.acceptance = result.criteria;
+  task.checkpoint = { ...result.version, branch: null };
   parseTask(json(task));
-  textField(task.plan.goal);
-  if (!task.plan.acceptance.length)
-    throw new Error('WORK_REPORT_FORMAT: acceptance criteria required');
-  if (
-    Object.keys(report.contract).some(
-      (key) =>
-        ![
-          'requirement',
-          'goal',
-          'scope',
-          'inputs',
-          'sources',
-          'nonGoals',
-          'acceptance',
-          'decisions',
-          'dependencies',
-        ].includes(key),
-    )
-  )
-    throw new Error('WORK_REPORT_FORMAT: only shared contract fields are allowed');
-  if (!Array.isArray(report.evidence) || report.evidence.length !== task.plan.acceptance.length)
+  if (!result.criteria.length) throw new Error('WORK_REPORT_FORMAT: criteria required');
+  for (const criterion of result.criteria) {
+    identifier(criterion.id);
+    if (!methods.includes(criterion.method))
+      throw new Error('WORK_REPORT_FORMAT: criterion method');
+  }
+  if (!Array.isArray(result.evidence) || result.evidence.length !== result.criteria.length)
     throw new Error('WORK_REPORT_FORMAT: one artifact per criterion');
   const seen = new Set<string>();
-  for (const entry of report.evidence) {
-    record(entry);
-    const criterion = task.plan.acceptance.find(
-      (item) => item.id === entry.criterion && item.method === entry.method,
-    );
-    if (!criterion || seen.has(entry.criterion))
+  for (const entry of result.evidence) {
+    fields(record(entry), [
+      'criterion',
+      'method',
+      'representation',
+      'sourceSha256',
+      'path',
+      'sha256',
+      'environment',
+    ]);
+    if (
+      !result.criteria.some(
+        (criterion) => criterion.id === entry.criterion && criterion.method === entry.method,
+      ) ||
+      seen.has(entry.criterion)
+    )
       throw new Error('WORK_REPORT_FORMAT: evidence criterion');
     seen.add(entry.criterion);
-    identifier(entry.criterion);
+    const own = `${evidenceRoot({ prd, key: result.key })}/${entry.criterion}.md`;
     if (
-      entry.path !== `evidence/${entry.criterion}.md` ||
-      !['original', 'redacted', 'excerpt'].includes(entry.representation)
+      entry.path !== own &&
+      !/^docs\/tasks\/history\/(?:complete|pending)\/[a-z0-9_-]+\/evidence\/[a-z0-9_-]+\.md$/.test(
+        entry.path,
+      )
     )
-      throw new Error('WORK_REPORT_FORMAT: evidence path/representation');
+      throw new Error('WORK_REPORT_FORMAT: evidence location');
+    if (!['original', 'redacted', 'excerpt'].includes(entry.representation))
+      throw new Error('WORK_REPORT_FORMAT: representation');
     hashField(entry.sourceSha256);
     hashField(entry.sha256);
     textField(entry.environment);
   }
-  if (accepted || report.acceptance !== undefined) {
-    const acceptance = record(report.acceptance);
-    if (acceptance.candidate !== report.checkpoint.candidate)
+  if (accepted || result.acceptance !== undefined) {
+    const acceptance = record(result.acceptance);
+    fields(acceptance, ['candidate', 'statement', 'reference']);
+    if (acceptance.candidate !== result.version.candidate)
       throw new Error('WORK_REPORT_FORMAT: acceptance candidate mismatch');
     textField(acceptance.statement);
     textField(acceptance.reference);
   }
-  return report;
+  return result;
 }
-
+export function parseBook(source: string): ResultBook {
+  const book = record(metadata(source, 'mio-prd-results'));
+  fields(book, ['version', 'prd', 'results']);
+  if (book.version !== 2 || !Array.isArray(book.results))
+    throw new Error('WORK_REPORT_FORMAT: book version/results');
+  const prd = textField(book.prd);
+  const results = book.results.map((result) => parseResult(result, prd, true));
+  if (new Set(results.map((result) => result.key)).size !== results.length)
+    throw new Error('WORK_REPORT_FORMAT: duplicate result key');
+  return { version: 2, prd, results };
+}
+export function parseDraft(source: string): ResultDraft {
+  const value = record(metadata(source, 'mio-result-draft'));
+  fields(value, ['version', 'prd', 'result']);
+  if (value.version !== 2) throw new Error('WORK_REPORT_FORMAT: draft version');
+  const prd = textField(value.prd);
+  const result = parseResult(value.result, prd, false);
+  if (result.acceptance) throw new Error('WORK_REPORT_FORMAT: draft cannot contain acceptance');
+  return { version: 2, prd, result };
+}
 export function parseIndex(source: string): TaskIndex {
-  const obj = record(metadata(source, 'mio-task-index'));
-  if (obj.version !== 1 || !Array.isArray(obj.tasks))
-    throw new Error('WORK_REPORT_FORMAT: index version/tasks');
+  const index = record(metadata(source, 'mio-prd-index'));
+  fields(index, ['version', 'prds', 'history']);
+  if (index.version !== 2 || !Array.isArray(index.prds))
+    throw new Error('WORK_REPORT_FORMAT: index version/prds');
   const seen = new Set<string>();
-  for (const value of obj.tasks) {
+  for (const value of index.prds) {
     const entry = record(value);
-    const id = identifier(textField(entry.id));
-    if (seen.has(id)) throw new Error(`WORK_REPORT_FORMAT: duplicate task ${id}`);
-    seen.add(id);
-    textField(entry.title);
-    textField(entry.requirement);
-    textArray(entry.modules);
-    if (!['pending', 'complete', 'reopened'].includes(String(entry.status)))
-      throw new Error('WORK_REPORT_FORMAT: index status');
-    if (entry.report !== undefined) {
-      const ref = record(entry.report);
-      if (ref.path !== reportPath(id)) throw new Error('WORK_REPORT_FORMAT: report location');
-      hashField(ref.sha256);
-      hashField(ref.candidate);
-    } else if (entry.status !== 'pending')
-      throw new Error('WORK_REPORT_FORMAT: completed/reopened task needs a report');
-    if (entry.review !== undefined) {
-      const ref = record(entry.review);
-      if (ref.path !== reviewPath(id) || entry.status === 'complete')
-        throw new Error('WORK_REPORT_FORMAT: review location/status');
-      hashField(ref.sha256);
-      hashField(ref.candidate);
-    }
+    fields(entry, ['prd', 'report']);
+    const prd = textField(entry.prd);
+    if (seen.has(prd)) throw new Error('WORK_REPORT_FORMAT: duplicate PRD');
+    seen.add(prd);
+    const ref = record(entry.report);
+    fields(ref, ['path', 'sha256']);
+    if (ref.path !== reportPath(prd)) throw new Error('WORK_REPORT_FORMAT: book location');
+    hashField(ref.sha256);
   }
-  return obj as unknown as TaskIndex;
-}
-
-export async function optionalText(root: string, path: string): Promise<string | null> {
-  try {
-    return await readFile(await checkedPath(root, path), 'utf8');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
+  if (index.history !== undefined) {
+    const history = record(index.history);
+    fields(history, ['path', 'sha256']);
+    if (history.path !== 'docs/tasks/history/index.md')
+      throw new Error('WORK_REPORT_FORMAT: history location');
+    hashField(history.sha256);
   }
+  return index as unknown as TaskIndex;
 }
 export async function readIndex(root: string) {
   const source = await optionalText(root, indexPath);
-  return {
-    source,
-    index: source === null ? ({ version: 1, tasks: [] } as TaskIndex) : parseIndex(source),
-  };
+  const index = source === null ? { version: 2 as const, prds: [] } : parseIndex(source);
+  if (source !== null) {
+    const options = { parser: 'markdown', printWidth: 100 };
+    const [actual, expected] = await Promise.all([
+      format(source, options),
+      format(renderIndex(index), options),
+    ]);
+    if (actual !== expected)
+      throw new Error('WORK_REPORT_INTEGRITY: index content differs from its entries');
+  }
+  return { source, index };
 }
-
-/** Read the published review before replacing it; edited shared bytes must be reconciled. */
-export async function reviewFiles(root: string, id: string, ref?: IndexEntry['review']) {
+export async function readBook(root: string, prd: string, index: TaskIndex) {
+  const source = await optionalText(root, reportPath(prd));
+  const ref = index.prds.find((entry) => entry.prd === prd)?.report;
+  if (
+    (source === null) !== (ref === undefined) ||
+    (source !== null && digest(source) !== ref?.sha256)
+  )
+    throw new Error('WORK_DELIVERY_CONFLICT: book/index mismatch');
+  const book = source === null ? { version: 2 as const, prd, results: [] } : parseBook(source);
+  if (book.prd !== prd) throw new Error('WORK_REPORT_BINDING: PRD mismatch');
+  for (const result of book.results) await resultFiles(root, result);
+  return { book, source };
+}
+export async function resultFiles(root: string, result: PublicResult) {
   const files: Record<string, string> = {};
-  if (!ref) return files;
-  const source = await optionalText(root, ref.path);
-  if (source === null || digest(source) !== ref.sha256)
-    throw new Error('WORK_DELIVERY_CONFLICT: published review changed');
-  const report = parseReport(source, false);
-  if (report.acceptance || report.id !== id || report.checkpoint.candidate !== ref.candidate)
-    throw new Error('WORK_DELIVERY_CONFLICT: published review binding');
-  files[ref.path] = source;
-  for (const entry of report.evidence) {
-    const path = `${reviewRoot(id)}/${entry.path}`;
-    const content = await optionalText(root, path);
-    if (content === null || digest(content) !== entry.sha256)
-      throw new Error(`WORK_DELIVERY_CONFLICT: published review evidence changed ${path}`);
-    files[path] = content;
+  for (const entry of result.evidence) {
+    const bytes = await optionalText(root, entry.path);
+    if (bytes === null || digest(bytes) !== entry.sha256)
+      throw new Error(`WORK_REPORT_EVIDENCE: ${entry.path}`);
+    files[entry.path] = bytes;
   }
   return files;
 }
 
-/** Inspect the private draft against the current candidate and latest recorded originals. */
+/** Private preparation never publishes progress or transfers acceptance. */
 export async function readDraft(root: string, task: Task, candidate: string) {
   const ref = task.delivery?.draft;
-  if (!ref || ref.candidate !== candidate)
-    throw new Error('WORK_DELIVERY_STALE: prepare and review the current draft');
+  if (task.delivery?.version !== 2 || !ref || ref.candidate !== candidate)
+    throw new Error('WORK_DELIVERY_STALE: prepare the current result draft');
   const source = await readFile(await checkedPath(root, ref.path), 'utf8');
   if (digest(source) !== ref.sha256) throw new Error('WORK_DELIVERY_STALE: draft bytes changed');
-  const report = parseReport(source, false);
-  if (report.id !== task.plan.id || report.checkpoint.candidate !== candidate)
-    throw new Error('WORK_DELIVERY_STALE: draft candidate mismatch');
+  const draft = parseDraft(source);
+  if (
+    draft.prd !== task.plan.result?.prd ||
+    draft.result.key !== task.plan.result.key ||
+    draft.result.version.candidate !== candidate
+  )
+    throw new Error('WORK_DELIVERY_STALE: draft result/candidate mismatch');
   const attachments: Record<string, string> = {};
-  for (const entry of report.evidence) {
+  for (const entry of draft.result.evidence) {
     const original = task.evidence
       .filter(
         (item) =>
@@ -257,83 +271,87 @@ export async function readDraft(root: string, task: Task, candidate: string) {
     )
       throw new Error('WORK_DELIVERY_STALE: evidence changed after draft preparation');
     const content = await readFile(
-      await checkedPath(root, `.work/tasks/${task.plan.id}/delivery/${entry.path}`),
+      await checkedPath(
+        root,
+        `.work/tasks/${task.plan.id}/delivery/evidence/${entry.criterion}.md`,
+      ),
       'utf8',
     );
     if (digest(content) !== entry.sha256)
       throw new Error(`WORK_DELIVERY_EVIDENCE: draft attachment changed ${entry.path}`);
     attachments[entry.path] = content;
   }
-  const { index, source: indexBefore } = await readIndex(root);
-  const published = index.tasks.find((entry) => entry.id === task.plan.id)?.review;
-  if (published) {
-    if (published.sha256 !== ref.sha256 || published.candidate !== candidate)
-      throw new Error('WORK_DELIVERY_STALE: published review differs from the accepted draft');
-  } else if ((await optionalText(root, reviewPath(task.plan.id))) !== null) {
-    throw new Error('WORK_DELIVERY_CONFLICT: published review missing from index');
-  }
-  const pending = await reviewFiles(root, task.plan.id, published);
-  return { report, attachments, index, indexBefore, pending };
+  return { draft, attachments };
 }
+const link = (from: string, to: string) =>
+  relative(dirname(from), to)
+    .replaceAll('\\', '/')
+    .split('/')
+    .map((part) =>
+      encodeURIComponent(part).replace(
+        /[!'()*]/g,
+        (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+      ),
+    )
+    .join('/');
+const label = (value: string) => value.replace(/[\\[\]`*_<>]/g, '\\$&');
 const cell = (value: string) => value.replaceAll('|', '\\|').replace(/\s+/g, ' ');
 export function renderIndex(index: TaskIndex): string {
-  index.tasks.sort((a, b) => a.id.localeCompare(b.id));
-  const rows = index.tasks.map(
-    (entry) =>
-      `| ${cell(entry.id)} | ${cell(entry.title)} | ${cell(entry.modules.join('、'))} | ${cell(entry.requirement)} | ${entry.status} | ${entry.review ? `[待接受报告](pending/${entry.id}/report.md) · ${entry.review.candidate.slice(0, 12)}` : '无待接受报告'} | ${entry.report ? `[报告](complete/${entry.id}/report.md) · ${entry.report.candidate.slice(0, 12)}` : '尚无接受结果'} |`,
-  );
-  return `# 任务交付索引\n\n按需求或模块查任务，再读取相关报告与必要证据；不默认展开全部历史。pending 是指定候选的待接受快照，不证明当前源码仍匹配；complete 保存最后接受的交付快照，reopened 表示已有新工作，旧报告不证明新候选通过。固定历史引用使用报告所在提交、路径和受验版本。\n\n| 任务 | 功能 | 模块 | 需求 | 协作状态 | 待接受结果 | 最后接受结果 |\n| --- | --- | --- | --- | --- | --- | --- |\n${rows.join('\n')}\n\n\`\`\`mio-task-index\n${json(index)}\`\`\`\n`;
-}
-export function renderReport(report: Report): string {
-  const links = report.evidence
+  index.prds.sort((a, b) => a.prd.localeCompare(b.prd));
+  const rows = index.prds
     .map(
       (entry) =>
-        `- ${entry.criterion} (${entry.method}, ${entry.representation}): [原件/摘录](${entry.path})`,
+        `| [${cell(label(entry.prd))}](${link(indexPath, entry.prd)}) | [已接受成果](${link(indexPath, entry.report.path)}) |`,
     )
     .join('\n');
-  return `# ${report.title}\n\n任务：${report.id}；实施者：${report.author}。本报告是指定候选的交付快照，当前规则以现行规格为准。\n\n## 完成功能\n\n${report.outcomes}\n\n## 必要决定\n\n${report.decisions}\n\n## 限制\n\n${report.limitations}\n\n## 验收依据\n\n${links}\n\n接受：${report.acceptance ? `${report.acceptance.statement}\n\n来源：${report.acceptance.reference}` : '待真实结果接受；草稿不能作为完成结论。'}\n\n\`\`\`mio-task-report\n${json(report)}\`\`\`\n`;
+  const history = index.history
+    ? `\n[历史护栏维护与交付依据](history/index.md)：保留当时的候选、接受和验证范围，不计入 PRD 开发进度。\n`
+    : '';
+  return `# PRD 成果索引\n\n每份 PRD 一个公共成果入口，只登记已验证并接受的开发能力。表中入口及成果数量不代表整份 PRD 已完成；当前需求与未完成项回到 PRD。个人进度、待接受草稿和维护收尾留在本人的工作记录。\n\n| PRD | 已接受成果 |\n| --- | --- |\n${rows}\n${history}\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
+}
+function resultBody(result: PublicResult, path: string, privateDraft = false) {
+  const links = result.evidence
+    .map(
+      (entry) =>
+        `- ${entry.criterion} (${entry.method}, ${entry.representation}): [公开依据](${privateDraft ? `evidence/${entry.criterion}.md` : link(path, entry.path)})`,
+    )
+    .join('\n');
+  return `## ${result.key}\n\n**${result.title}**\n\n${result.outcomes}\n\n必要决定：${result.decisions}\n\n限制：${result.limitations}\n\n受验候选：${result.version.candidate}；Git HEAD：${result.version.head ?? '未提交仓库'}。精确文件摘要与契约摘要见下方版本绑定，不把 HEAD 当作未提交内容的身份。\n\n${links}\n\n接受：${result.acceptance ? `${result.acceptance.statement}\n\n来源：${result.acceptance.reference}` : '待针对本候选的真实结果接受。'}\n`;
+}
+export function renderBook(book: ResultBook): string {
+  return `# 已接受开发成果\n\nPRD：[${label(book.prd)}](${link(reportPath(book.prd), book.prd)})。这里只汇总以下范围的已接受成果，不宣称整份 PRD、当前源码或生产验收完成。每项保留自己的受验版本；新工作不会自动继承旧通过。\n\n${book.results.map((result) => resultBody(result, reportPath(book.prd))).join('\n')}\n\`\`\`mio-prd-results\n${json(book)}\`\`\`\n`;
+}
+export function renderDraft(draft: ResultDraft): string {
+  return `# 开发成果待接受草稿\n\nPRD：${label(draft.prd)}。本草稿留在个人记录，不能作为已完成结论。\n\n${resultBody(draft.result, reportPath(draft.prd), true)}\n\`\`\`mio-result-draft\n${json(draft)}\`\`\`\n`;
 }
 
-/** Validate only public bytes, never the author's .work. */
+/** Validate public packages without the author's private records or original logs. */
 export async function checkReports(root: string, files: readonly string[]): Promise<string[]> {
-  const errors: string[] = [];
   try {
-    const { index } = await readIndex(root);
-    const linked = new Map<string, Set<string>>();
-    for (const entry of index.tasks) {
-      for (const [kind, ref] of [
-        ['report', entry.report],
-        ['review', entry.review],
-      ] as const) {
-        if (!ref) continue;
-        const source = await optionalText(root, ref.path);
-        if (source === null || digest(source) !== ref.sha256)
-          throw new Error(`WORK_REPORT_INTEGRITY: ${entry.id}`);
-        const report = parseReport(source, kind === 'report');
-        if (kind === 'review' && report.acceptance)
-          throw new Error(`WORK_REPORT_FORMAT: pending review cannot record acceptance`);
-        if (report.id !== entry.id || report.checkpoint.candidate !== ref.candidate)
-          throw new Error(`WORK_REPORT_BINDING: ${entry.id}`);
-        const base = kind === 'report' ? reportRoot(entry.id) : reviewRoot(entry.id);
-        const paths = new Set([ref.path]);
-        for (const evidence of report.evidence) {
-          const path = `${base}/${evidence.path}`;
-          const bytes = await optionalText(root, path);
-          if (bytes === null || digest(bytes) !== evidence.sha256)
-            throw new Error(`WORK_REPORT_EVIDENCE: ${path}`);
-          paths.add(path);
-        }
-        linked.set(base, paths);
-      }
+    const { index, source } = await readIndex(root);
+    const linked = await legacyFiles(root);
+    if (linked.size && !index.history)
+      throw new Error('WORK_REPORT_INTEGRITY: history index is not linked');
+    if (index.history) {
+      const history = await optionalText(root, index.history.path);
+      if (history === null || digest(history) !== index.history.sha256)
+        throw new Error('WORK_REPORT_INTEGRITY: history index');
     }
-    for (const path of files.filter(
-      (file) => file.startsWith('docs/tasks/complete/') || file.startsWith('docs/tasks/pending/'),
-    )) {
-      const base = path.split('/').slice(0, 4).join('/');
-      if (!linked.get(base)?.has(path)) throw new Error(`WORK_REPORT_ORPHAN: ${path}`);
+    if (source !== null) linked.add(indexPath);
+    for (const entry of index.prds) {
+      const { book } = await readBook(root, entry.prd, index);
+      await checkedPath(root, book.prd);
+      if ((await optionalText(root, book.prd)) === null)
+        throw new Error('WORK_REPORT_SOURCE: PRD missing');
+      linked.add(entry.report.path);
+      for (const result of book.results)
+        for (const evidence of result.evidence) linked.add(evidence.path);
     }
+    for (const file of files.filter((path) => path.startsWith('docs/tasks/'))) {
+      if (!linked.has(file)) throw new Error(`WORK_REPORT_ORPHAN: ${file}`);
+    }
+    return [];
   } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
+    return [error instanceof Error ? error.message : String(error)];
   }
-  return errors;
 }

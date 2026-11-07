@@ -7,7 +7,7 @@
 - [HTTP API](docs/api.md)
 - [账号注册、登录与会话配置](docs/auth.md)
 - [验收标准与入口](docs/acceptance.md)
-- [任务交付索引](docs/tasks/index.md)
+- [PRD 成果索引](docs/tasks/index.md)
 - [开发入口](AGENTS.md)
 - [团队任务协调](docs/coordination.md)
 
@@ -56,7 +56,7 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 源码任务自动登记 `quality-review`，Agent 在 verify 阶段实际审阅算法成本、未使用公共函数/方法和未复用的已有实现，再记录当前候选原件。交付缺少匹配审查不能通过；普通检查不会自行调用模型。判据与执行边界见 [验证协议](docs/coordination.md#验证与接受)。
 
-任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`，通过 `pnpm work status` 查看当前核对结果。命令型实施使用 `pnpm work exec <task> -- <argv ...>`，在子进程启动前检查 C1 条件；直接编辑仍由 Agent 遵守前置核对。证据齐全后的 `deliver prepare` 会在[公共任务索引](docs/tasks/index.md)登记待接受报告；收到针对候选的真实接受后，由 Agent 执行 `complete` 生成完成报告。pending 与 complete 分别表示待接受快照与最后接受结果。
+任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`，通过 `pnpm work status` 查看当前核对结果。命令型实施使用 `pnpm work exec <task> -- <argv ...>`，在子进程启动前检查 C1 条件；直接编辑仍由 Agent 遵守前置核对。明确的开发能力用 `plan.result={prd,key}` 关联 PRD 和稳定成果键；证据齐全后的 `deliver prepare` 只保存私有草稿，真实接受后 `complete` 更新[同一 PRD 的成果入口](docs/tasks/index.md)。维护、演练和流程收尾检查后按需 archive，个人过程不生成公共 complete。历史护栏依据单独保留，已登记成果不等于整份 PRD 完成。
 
 公共协议、需求、源码、测试和检查配置入库；每人的 `.work/` 内容、运行资料 `.runtime/`、凭证 `.env*`、依赖与构建产物忽略。本地开发遵守统一记录协议；公共检查不要求任何成员的私人记录存在。忽略规则不提供备份或清除已跟踪内容，跨人交接需要单独提供代码与必要证据。
 

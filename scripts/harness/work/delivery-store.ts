@@ -1,10 +1,10 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
-import { indexPath, optionalText, reportRoot, reviewRoot } from './reports.ts';
+import { evidenceRoot, indexPath, optionalText, reportPath } from './reports.ts';
 
 interface Change {
   path: string;
@@ -22,7 +22,7 @@ export interface Operation {
 }
 export const operationPath = (id: string) => `.work/tasks/${id}/delivery/operation.json`;
 
-export async function loadOperation(root: string, id: string): Promise<Operation | null> {
+export async function loadOperation(root: string, id: string) {
   const raw = await optionalText(root, operationPath(id));
   if (raw === null) return null;
   const op = JSON.parse(raw) as Operation;
@@ -34,11 +34,21 @@ export async function loadOperation(root: string, id: string): Promise<Operation
     typeof op.done !== 'boolean'
   )
     throw new Error('WORK_DELIVERY_OPERATION: invalid journal');
+  const state = op.changes.at(-1);
+  if (state?.path !== `.work/tasks/${id}/state.json` || !state.after)
+    throw new Error('WORK_DELIVERY_OPERATION: state must be last');
+  const task = parseTask(state.after);
+  if (task.plan.id !== id) throw new Error('WORK_DELIVERY_OPERATION: state must be last');
+  const target = task.plan.result;
   const allowed = (path: string) =>
     path === indexPath ||
     path === `.work/tasks/${id}/state.json` ||
-    path.startsWith(`${reportRoot(id)}/`) ||
-    path.startsWith(`${reviewRoot(id)}/`) ||
+    (task.delivery?.version === 2 &&
+      target &&
+      (path === reportPath(target.prd) || path.startsWith(`${evidenceRoot(target)}/`))) ||
+    (task.delivery?.version === 1 &&
+      (path.startsWith(`docs/tasks/complete/${id}/`) ||
+        path.startsWith(`docs/tasks/pending/${id}/`))) ||
     (op.kind === 'prepare' &&
       (path === `.work/tasks/${id}/delivery/draft.md` ||
         path.startsWith(`.work/tasks/${id}/delivery/evidence/`)));
@@ -54,14 +64,7 @@ export async function loadOperation(root: string, id: string): Promise<Operation
     await checkedPath(root, change.path);
     paths.add(change.path);
   }
-  const state = op.changes.at(-1);
-  if (
-    state?.path !== `.work/tasks/${id}/state.json` ||
-    !state.after ||
-    parseTask(state.after).plan.id !== id
-  )
-    throw new Error('WORK_DELIVERY_OPERATION: state must be last');
-  return op;
+  return { operation: op, raw };
 }
 
 /** Atomic per file, not a multi-file transaction. One writer per checkout. */
@@ -88,7 +91,9 @@ async function replace(root: string, id: string, change: Change) {
   }
 }
 
-export async function finishOperation(root: string, id: string, op: Operation) {
+async function finishOperation(root: string, id: string, op: Operation, journal: string) {
+  if ((await optionalText(root, operationPath(id))) !== journal)
+    throw new Error('WORK_DELIVERY_CONFLICT: operation journal changed');
   const task = parseTask(op.changes.at(-1)!.after!);
   if (json((await capture(root, task)).files) !== json(op.inputs))
     throw new Error('WORK_DELIVERY_STALE: inputs changed during operation');
@@ -100,8 +105,7 @@ export async function finishOperation(root: string, id: string, op: Operation) {
   }
   for (const change of op.changes) await replace(root, id, change);
   const path = operationPath(id);
-  const before = await readFile(await checkedPath(root, path), 'utf8');
-  await replace(root, id, { path, before, after: json({ ...op, done: true }) });
+  await replace(root, id, { path, before: journal, after: json({ ...op, done: true }) });
 }
 
 export async function commitDelivery(
@@ -138,11 +142,12 @@ export async function commitDelivery(
     done: false,
   };
   const previous = await loadOperation(root, id);
-  if (previous && !previous.done)
+  if (previous && !previous.operation.done)
     throw new Error('WORK_DELIVERY_PENDING: resume the original request');
   const path = operationPath(id);
-  await replace(root, id, { path, before: await optionalText(root, path), after: json(op) });
-  await finishOperation(root, id, op);
+  const journal = json(op);
+  await replace(root, id, { path, before: previous?.raw ?? null, after: journal });
+  await finishOperation(root, id, op, journal);
 }
 
 export async function replayDelivery(
@@ -152,11 +157,16 @@ export async function replayDelivery(
   verify: (task: Task, operation: Operation) => Promise<void>,
 ) {
   const owned = await loadTask(root, id);
-  const op = await loadOperation(root, id);
+  const loaded = await loadOperation(root, id);
+  const op = loaded?.operation;
   if (!op || (op.done && op.request !== request)) return false;
   if (op.request !== request) throw new Error('WORK_DELIVERY_PENDING: resume the original request');
   const state = op.changes.at(-1)!;
   const restored = parseTask(state.after!);
+  if (restored.delivery?.version !== 2)
+    throw new Error(
+      'WORK_DELIVERY_LEGACY: old public operations are read-only; preserve the journal and reconcile before upgrading',
+    );
   if (restored.member !== owned.task.member || restored.workspace !== root)
     throw new Error('WORK_OWNER: delivery operation belongs to another workspace');
   const current = await optionalText(root, state.path);
@@ -169,7 +179,7 @@ export async function replayDelivery(
     }
     return true;
   }
-  await finishOperation(root, id, op);
+  await finishOperation(root, id, op, loaded!.raw);
   return true;
 }
 

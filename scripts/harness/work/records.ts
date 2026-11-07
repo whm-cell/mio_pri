@@ -12,6 +12,7 @@ export interface Requirement {
 export interface TaskPlan {
   id: string;
   requirement?: Requirement;
+  result?: { prd: string; key: string };
   goal: string;
   scope: string[];
   inputs: string[];
@@ -56,18 +57,20 @@ export interface Task {
   notes: string[];
   archived: boolean;
   delivery?: {
-    version: 1;
+    version: 1 | 2;
     draft?: { path: string; sha256: string; candidate: string };
-    accepted?: { path: string; sha256: string; candidate: string };
+    accepted?: { path: string; sha256: string; candidate: string; key?: string };
   };
 }
 
 export const digest = (bytes: string | Buffer): string =>
   createHash('sha256').update(bytes).digest('hex');
 export const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+export const resultBookPath = (prd: string) =>
+  `docs/tasks/complete/prd-${digest(prd).slice(0, 16)}/report.md`;
 
 export function identifier(value: string): string {
-  if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(value))
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(value))
     throw new Error('WORK_ID: use a short lowercase id');
   return value;
 }
@@ -119,6 +122,21 @@ export function parseTask(raw: string): Task {
         throw new Error(`WORK_SCHEMA: requirement.${key}`);
     }
     identifier(requirement.key as string);
+  }
+  if (plan.result !== undefined) {
+    const result = object(plan.result);
+    if (
+      typeof result.prd !== 'string' ||
+      !result.prd.endsWith('.md') ||
+      !/^(?:docs\/|README\.md$|AGENTS\.md$)/.test(result.prd) ||
+      result.prd.split('/').some((part) => !part || part === '.' || part === '..') ||
+      result.prd.includes('\\') ||
+      Object.keys(result).some((key) => !['prd', 'key'].includes(key))
+    )
+      throw new Error('WORK_SCHEMA: result.prd must name a public Markdown source');
+    if (typeof result.key !== 'string' || !result.key.trim())
+      throw new Error('WORK_SCHEMA: result.key');
+    identifier(result.key as string);
   }
   for (const key of ['scope', 'inputs', 'sources', 'nonGoals', 'blockers']) {
     if (!strings(plan[key])) throw new Error(`WORK_SCHEMA: plan.${key}`);
@@ -187,10 +205,12 @@ export function parseTask(raw: string): Task {
   if (task.delivery !== undefined) {
     const delivery = object(task.delivery);
     if (
-      delivery.version !== 1 ||
+      ![1, 2].includes(delivery.version as number) ||
       Object.keys(delivery).some((key) => !['version', 'draft', 'accepted'].includes(key))
     )
       throw new Error('WORK_SCHEMA: delivery');
+    if (delivery.version === 2 && plan.result === undefined)
+      throw new Error('WORK_SCHEMA: delivery result binding');
     for (const kind of ['draft', 'accepted']) {
       if (delivery[kind] === undefined) continue;
       const ref = object(delivery[kind]);
@@ -205,8 +225,16 @@ export function parseTask(raw: string): Task {
       const expected =
         kind === 'draft'
           ? `.work/tasks/${plan.id}/delivery/draft.md`
-          : `docs/tasks/complete/${plan.id}/report.md`;
+          : delivery.version === 2
+            ? resultBookPath((plan.result as TaskPlan['result'])!.prd)
+            : `docs/tasks/complete/${plan.id}/report.md`;
       if (ref.path !== expected) throw new Error('WORK_SCHEMA: delivery path');
+      if (
+        delivery.version === 2 &&
+        (plan.result === undefined ||
+          (kind === 'accepted' && ref.key !== (plan.result as TaskPlan['result'])!.key))
+      )
+        throw new Error('WORK_SCHEMA: delivery result binding');
     }
   }
   for (const item of task.evidence) {

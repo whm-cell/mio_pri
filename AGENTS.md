@@ -7,7 +7,7 @@
 - 用户只需说“继续当前任务”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)结合对话、公共 PRD／规格和实际记录定位任务、判断 C0/C1 并推进；仅澄清真正影响下一步的缺口。用户无需指定 Skills、ID、哈希、命令或长提示词；Agent 维护本人 checkout/worktree 中忽略的 `.work/`。
 - Agent 收到新目标先取 `pnpm work guide start`，按其中的拆解与生命周期说明选择任务，再用 `ensure --stdin` 初始化／复用记录；中断后先用 `status` 找到原任务，再取 `context <task> resume`。事实变化用带 revision 的 `update --stdin` 更新。仅展开当前动作；[协调协议](docs/coordination.md)和仓库命令可独立使用，不要求个人 Skills。
 - Agent 编辑前先建档、核对现场并进入 `C1_IMPLEMENTATION`；安装依赖、生成或其他命令型实施经 `work exec <task> -- <argv ...>` 检查后启动。编辑工具仍由 Agent 在写入前遵守同一条件，CLI 不拦截任意宿主写入。契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。团队需求、设计草案与跨人交接放团队可访问的来源；个人过程留在 `.work`。单任务只设一个写入者；代码写入冲突时隔离工作区。
-- 任务交付按 [任务索引](docs/tasks/index.md) 渐进查找；证据齐全后 deliver prepare 发布公共 pending 报告与索引入口，并显示待真实接受。Agent 交回任务、候选、报告链接和限制；收到针对该结果的接受后负责执行 complete，核对公共报告与索引落盘。开始新任务不自动接受旧结果；重开保留旧报告，不继承新候选通过。
+- 开发成果按 [PRD 成果索引](docs/tasks/index.md) 查找，一份 PRD 一个公共入口。仅明确对应可验收开发能力的任务设置 `plan.result={prd,key}`；证据齐全后 deliver prepare 只生成个人草稿和必要附件，交回结果、候选、验证与限制。收到针对该结果的真实接受后执行 complete，按稳定成果键更新同一 PRD 汇总，保留其他成果。维护、演练与流程收尾只在本人 `.work`，检查后按需 archive，不要求公共 complete；历史护栏依据与 PRD 进度分开。重开不改旧公共事实，不继承新候选通过，成果数量不表示 PRD 整体完成。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。
 - 源码任务在 verify 阶段执行 `quality-review`：审阅算法成本、未使用的公共函数/方法及未复用的已有实现。缺项、缺证或旧候选原件不能交付；审查方法与不适用理由见 [验证协议](docs/coordination.md#验证与接受)，脚本不代替实际审阅。
 

@@ -33,7 +33,7 @@ const help = `Usage: pnpm work <command>
 Agent operates this CLI; the user supplies goals and decisions.
   ensure --stdin                       create/reuse a PRD subtask from structured JSON
   update <task> --stdin                 update plan/progress with an expected revision
-  deliver <task> --stdin                prepare a draft or complete an accepted delivery
+  deliver <task> --stdin                prepare privately or record an accepted PRD result
   init <member>                         initialize this member's workspace
   start <task> <goal> [source.md ...]    legacy draft; complete via update before sync
   status                                list local tasks
@@ -45,7 +45,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   exec <task> -- <argv ...>             check C1 before launching an implementation command
   evidence <task> <criterion> <pass|fail|pending> <artifact> <summary>
   handoff <task>                        prepare a local portable Markdown handoff
-  receive <shared.md>                   verify candidate, create this member's draft
+  receive <shared.md> [result-key]      verify a result/handoff, create this member's draft
   archive <task> <reason>               mark history; retain all files
 Actions: start, resume, implement, verify, deliver, handoff, archive
 Agent entry: guide start, then ensure --stdin; expand only the current action.`;
@@ -120,9 +120,9 @@ async function main() {
     );
   }
   if (command === 'receive') {
-    if (args.length !== 1) throw new Error(help);
+    if (args.length < 1 || args.length > 2) throw new Error(help);
     return console.log(
-      `Received draft ${(await receive(root, args[0]!)).plan.id}; verify authority and evidence before sync.`,
+      `Received draft ${(await receive(root, args[0]!, args[1])).plan.id}; verify authority and evidence before sync.`,
     );
   }
   if (!args[0]) throw new Error(help);

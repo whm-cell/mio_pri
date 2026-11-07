@@ -131,11 +131,15 @@ evidence 只用于 review／behavior，登记本任务 evidence 目录的真实�
 pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/evidence/quality-review.md "实际审查进度与限制"
 ```
 
-当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。收到针对候选的真实人类接受后通过下述 deliver complete 设置接受与释放，再 check；自动通过不代替这一接受。
+当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
 
 ## 交付命令
 
-`pnpm work deliver <task> --stdin` 由 Agent 执行。首次在取证前提交 `{"action":"prepare","revision":"当前 revision"}`，启用固定输出分类并返回新候选；审阅后 sync，重新收集匹配证据。旧 v1 记录未启用时保留原候选算法。启用后的明确输出仅为本任务 pending／complete 包和公共索引；不能将自己的输出作为需求来源，其他任务报告仍可作为输入。
+`pnpm work deliver <task> --stdin` 只用于明确的 PRD 开发成果，由 Agent 执行。建档或带 revision 的 update 中设置 `plan.result={"prd":"实际公共 PRD.md","key":"稳定成果键"}`；prd 必须是存在的公共 Markdown，key 用与任务 ID 相同的字符规则。Agent 判断它是否对应真实可验收能力，工具不从文件名、scope 或流程标签推断。未设置 result 的维护、检查和演练只保留个人记录，核对后 archive；prepare／complete 均拒绝公共写入。
+
+ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 update 设置 result 时升级，保留旧证据和历史说明，撤回个人通过。契约变化后审阅并 sync，再收集新候选证据；不需要首次空 prepare。旧 v1 状态与 handoff 仍可读取，公开旧操作不能重放出新 task 包；未结束的旧操作保留且阻止其他写入，须先核对，不能绕过保护。没有 result 的旧维护任务按 archive 收尾，不批量补证。
+
+输出排除仅限公共索引、该 PRD 的汇总导航和本人 key 的附件；自己的输出不能登记为需求来源。同 PRD 其他 key 的附件、其他 PRD、代码与规格照常参与真实 scope／inputs。汇总正文只供导航和成果阅读，实际依赖需登记相应代码、契约或附件，不通过忽略整个结果目录规避候选变化。
 
 所有验收项通过后，准备可读草稿：
 
@@ -154,7 +158,9 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 }
 ```
 
-每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时从原件读取 UTF-8；redacted／excerpt 必须提供共享文本。工具将摘要、环境和来源哈希写入附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。草稿保存到本人任务的 delivery/draft.md，同一报告和必要附件发布到 `docs/tasks/pending/<task-id>/`，公共索引新增或更新 review 引用；已有最后接受报告继续保留。返回新 revision、draft.sha256、公共 review 引用和 readyForAcceptance，记录 HOLD_FOR_HUMAN_REVIEW；不得以草稿存在认定完成。发布前按原件/脱敏/摘录选择要共享的文本，不共享个人过程。
+每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时读取 UTF-8；redacted／excerpt 必须提供共享文本。来源哈希、环境和表示方式写入必要附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。prepare 只写本人任务的 `delivery/draft.md` 与 `delivery/evidence/<criterion>.md`，不修改公共文件；草稿证据链接指向这些实际附件。返回新 revision、draft.sha256 和 readyForAcceptance，记录 HOLD_FOR_HUMAN_REVIEW；草稿存在不表示完成。
+
+本地用户可审阅该草稿；团队需要评审候选时，从既有 PR 或明确共享渠道取得代码、验证摘要与必要依据，不要求复制作者 `.work`，不默认另建每任务永久 pending 报告，不自动上传。
 
 取得真实结果接受后：
 
@@ -171,9 +177,9 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 }
 ```
 
-命令核对全部必需原件、候选、草稿、接受绑定，以及旧报告与附件的 HEAD 保存情况；只在全部满足时更新公共 complete 报告、必要 Markdown 附件、索引和个人接受，移除对应 pending 包。公共待接受文件被人工改动时拒绝覆盖，先核对；旧的私有草稿仍可沿原条件完成，重新 prepare 才发布新的公共待接受入口。不会自动提交、上传或部署。准备草稿前后的代码变化使其失效；接受文本的真实性不能由字符串校验证明。
+命令核对必需原件、候选、私有草稿和接受绑定，按 PRD 路径派生的稳定目录更新 `docs/tasks/complete/<prd-id>/report.md`。每个 key 保存自己的受验版本、必要证据和接受；同 key 更新保留兄弟成果，索引每 PRD 一条，不表示 PRD 整体完成。新 key 可直接追加；替换已有 key 时，旧结果与必要附件须在当前 HEAD 可恢复，按 key 比较，未提交的兄弟成果不阻塞替换。公共文件遭人工修改时先核对，不能覆盖。不会自动提交、上传或部署；接受文本的真实性不能由字符串校验证明。
 
-中断时原样重试原 prepare／complete／reopen 请求，工具依据操作记录恢复；已完成的同一请求幂等。发现人工修改或其他写入时拒绝覆盖，先审阅冲突；未结束的交付操作会阻止其他记录写入。原报告必须先进入可恢复 Git 提交，才能被下一次完成覆盖。公共输出与候选分离仍需公共格式、链接和完整性检查，不是免检目录。
+中断时原样重试原 v2 prepare／complete 请求，工具依据 journal 恢复；未受干扰的同一请求幂等。修改后的索引、汇总、附件或状态拒绝覆盖，未结束操作阻止其他记录写入。已完成请求也不重写被人恢复的旧字节；后续存在合法更新时读取当前成果，不重放旧快照。reopen 只更新个人状态，不改公共事实。公开格式、链接与完整性单独检查，输出排除不是免检。
 
 ## 发送与接收
 
@@ -184,7 +190,7 @@ pnpm work receive .work/inbox/api-probe.md
 
 handoff 输出本地 `handoff-<内容摘要>.md`。相同内容复用，候选／摘要变化另建草稿，人工修改的已有文件不覆盖。审阅脱敏后沿现有渠道共享，并实际提供固定代码和所需原件；工具不上传、不复制代码、不同步他人的目录。
 
-接收方也可对 `docs/tasks/complete/<task-id>/report.md` 使用 receive：核对报告与附件，建立自己的草稿，并在个人 notes 列出当前源码与历史受验版本的差异；不要求代码相同，不继承权限或证据。原始 handoff 格式仍要求精确候选匹配。
+接收方也可用 `work receive docs/tasks/complete/<prd-id>/report.md <result-key>` 选择一个成果；只有一项时可省略 key。工具核对公开附件，创建本人草稿，并在 notes 列出历史清单内当前文件的差异，不宣称发现清单外新增文件。草稿不继承授权、写入范围、checkpoint 或通过原件，须重新定义当前契约。旧 v1 报告可从 `docs/tasks/history/complete/<task-id>/report.md` 读取为私有草稿；历史路径映射不改旧候选。精确代码 handoff 仍要求文件匹配。
 
 接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已有公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
 
@@ -206,6 +212,7 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | member／workspace／plan.id                          | 本人成员、真实工作区、任务目录绑定；成员只是本地标签                                                          |
 | plan.requirement（可选）                            | `{source,section,key}`；公共 PRD／规格章节与个人拆解项关联；新任务由此生成稳定 ID，旧记录无需迁移             |
+| plan.result（可选）                                 | `{prd,key}`；明确开发能力的公共 PRD 与稳定成果键；缺省为未声明公共成果，仅维护个人记录、不自动发布            |
 | plan.goal／scope／inputs／sources                   | 目标、写入范围、所读代码／配置、相关需求文件                                                                  |
 | plan.authorization／nonGoals                        | 真实授权与非目标                                                                                              |
 | plan.acceptance                                     | ID、可观察判据、automated／review／behavior                                                                   |
@@ -219,8 +226,8 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 固定策略文件 AGENTS.md、协调协议和本页仍完整参与摘要核对；不是默认阅读全文的清单。scope／inputs 的目录展开已分类文件，包含未提交与未跟踪内容；scope 可以有尚未创建的目标，sources／inputs 缺失则报错。绝对路径、..、符号链接、私有／凭证／生成目录不可作为公共输入。
 
-候选绑定所选字节和契约；成员、绝对工作区、HEAD 不进入内容候选，单纯提交相同内容不使证据失效。下一步、阻塞、共享导航、阶段标签不改变候选；需求关联、目标、范围、来源、授权、验收和决策改变会改变候选。没有 requirement 的旧记录保持原候选算法。revision 是整份当前记录字节摘要，和候选用途不同：进度或 notes 更新也会改变 revision。
+候选绑定所选字节和契约；成员、绝对工作区、HEAD 不进入内容候选，单纯提交相同内容不使证据失效。下一步、阻塞、共享导航、阶段标签不改变候选；需求关联、result 归属、目标、范围、来源、授权、验收和决策改变会改变候选。未显式升级的旧记录保持原候选算法。revision 是整份当前记录字节摘要，和候选用途不同：进度或 notes 更新也会改变 revision。
 
-可选 delivery 字段保存固定格式版本、当前草稿与最后接受报告引用；它不是通用输出排除开关。
+可选 delivery 保存格式版本、私有草稿和最后接受引用。v2 accepted 的 path 指向 PRD 汇总，key 指向成果，sha256 是该成果规范 JSON 摘要，candidate 是其受验候选；兄弟成果变化不改这个绑定。公共索引的 sha256 则核对整份汇总文件，两者用途不同。它不是通用输出排除开关。
 
-公共协议、源码、测试及用于共享审阅的 pending／已接受 complete 报告入库；member.json、tasks/<task>/state.json、evidence、handoff 和 inbox 位于忽略的 .work。公共 CI 不读取这些成员内容，也不替代本地 work check。备份和传输沿真实项目选择；原始历史仅在需要复现或交接时按引用取得。
+公共协议、源码、测试、PRD 已接受成果与必要脱敏依据入库；原 v1 索引及十份包在 history 原字节保留，护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。

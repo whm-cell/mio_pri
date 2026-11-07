@@ -1,21 +1,5 @@
 # Foundation API v1
 
-基础 Profile 提供服务探针与能力查询；配置认证后另提供 [自助注册、登录与用户会话](auth.md) 和 `GET /api/v1/me`。没有业务会话、消息、生成任务、流式事件或文件接口。后续业务 API 语义需要另行确定。
+现行 HTTP 契约由[API 领域导航](apis/index.md)定位：[Foundation 探针与服务能力](apis/foundation.md)、[认证与可信身份](apis/auth.md)。每个接口的身份、输入、响应、错误及副作用只在所属域维护；本页保留旧入口。
 
-| 方法与路径                 | 认证   | 成功响应                                                               |
-| -------------------------- | ------ | ---------------------------------------------------------------------- |
-| `GET /healthz`             | 无     | `{"status":"ok","service":"mio-foundation"}`                           |
-| `GET /readyz`              | 无     | `{"status":"ready","instanceId":"每次插件激活生成的 UUID"}`            |
-| `GET /api/v1/capabilities` | Bearer | `{"apiVersion":"v1","stage":"foundation","tools":[],"sessions":false}` |
-
-`readyz` 只有配置有效且插件已装载才存在。它证明基础插件就绪，不证明模型、业务数据库或生成供应商可用。端口打开本身不能替代该检查。
-
-本表的认证使用部署注入的 `MIO_API_TOKEN`，至少 32 个 URL-safe 字符，要求精确的 `Authorization: Bearer <token>`。这是单信任域服务凭据；不能放入公开前端构建或当作 SaaS 用户登录方案。浏览器联调只能由受信任操作者在运行时提供开发凭据。用户会话由认证入口单独验证；项目/资产授权尚未实现。
-
-本表的 `MIO_ALLOWED_ORIGINS` 是精确 Origin 字符串的 JSON 数组，默认 `[]`。存在 Origin 请求头时必须匹配；无 Origin 的服务调用仍需 Bearer。CORS 不代替认证。允许的 OPTIONS 预检无须 Bearer，实际查询必须认证；只允许 GET 和 Authorization 请求头，不启用 Cookie 凭据。认证路由和 `/api/v1/me` 采用另行声明的 Origin/会话 cookie 契约。
-
-本表的已知路由不支持的方法返回 405，未知 mio API 返回 404，凭据缺失/不符返回 401，Origin 不允许返回 403。错误为 `{"error":{"code":"...","message":"...","requestId":"..."}}`；服务器生成的请求标识也在 `X-Request-Id` 中返回。不返回 token、异常栈或内部路径。所有响应禁止缓存。
-
-插件卸载后撤销自身路由与执行守卫；其他插件生命周期由 DSH 管理。部署只使用当前完整 Profile；不能把此插件加载到含任意工具或不受信任插件的通用 Web 配置后，仍宣称整实例具备相同隔离。
-
-下一接口切片须确定：调用者与会话归属、提交凭据与执行完成的区别、事件传输/重连、取消语义、持久化恢复，以及真实业务副作用。这里不预置这些接口或状态机。
+配置与迁移见[认证底座](auth.md)，当前需求与尚未确定的接口见[技术底座 PRD](prd-ai-drama-foundation.md)。新增接口先明确身份、资源归属、持久化和外部副作用，不将候选接口写成现有能力。

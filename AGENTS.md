@@ -1,5 +1,7 @@
 # Mio 开发入口
 
+资料按[用途导航](docs/index.md)逐步展开，只登记实际遵循的子文档；新增资料链接回权威入口，不按需求完成搬迁现行契约或既有 PRD。
+
 当前交付范围是 TypeScript 插件服务基础护栏。需求、已采用规则、模块边界与待定项见 [底座规格](docs/foundation.md)，对外契约见 [API 约定](docs/api.md)，启动和检查见 [README](README.md)。
 
 ## 团队任务协调

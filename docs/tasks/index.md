@@ -16,7 +16,7 @@
       "prd": "docs/prd-ai-drama-foundation.md",
       "report": {
         "path": "docs/tasks/complete/prd-5f1fa63bbcbb5049/report.md",
-        "sha256": "8ccb1ef3dc066ec53334d01e455c44d93a73d691ac67f24b1b41af81eb167473"
+        "sha256": "a83d2b604d6b6efcf60e121ebe1223f89b8b70182cacc7d6817fb7043158c59b"
       }
     }
   ],

@@ -30,6 +30,8 @@ export const reportPath = resultBookPath;
 const reportRoot = (prd: string) => dirname(reportPath(prd));
 export const evidenceRoot = (result: NonNullable<TaskPlan['result']>) =>
   `${reportRoot(result.prd)}/evidence/${identifier(result.key)}`;
+export const resultPath = (result: NonNullable<TaskPlan['result']>) =>
+  `${reportRoot(result.prd)}/results/${identifier(result.key)}.md`;
 
 /** The book is navigation; sibling results' actual evidence remains an ordinary input. */
 export function deliveryOutput(task: Task, path: string) {
@@ -44,6 +46,7 @@ export function deliveryOutput(task: Task, path: string) {
     !!target &&
     (path === indexPath ||
       path === reportPath(target.prd) ||
+      path === resultPath(target) ||
       path.startsWith(`${evidenceRoot(target)}/`))
   );
 }
@@ -60,9 +63,14 @@ export interface PublicResult {
   acceptance?: { candidate: string; statement: string; reference: string };
 }
 export interface ResultBook {
-  version: 2;
+  version: 2 | 3;
   prd: string;
   results: PublicResult[];
+}
+interface ResultNavigation {
+  version: 3;
+  prd: string;
+  results: { key: string; title: string; path: string; sha256: string }[];
 }
 export interface TaskIndex {
   version: 2;
@@ -166,6 +174,66 @@ export function parseBook(source: string): ResultBook {
     throw new Error('WORK_REPORT_FORMAT: duplicate result key');
   return { version: 2, prd, results };
 }
+export function parseNavigation(source: string): ResultNavigation {
+  const value = record(metadata(source, 'mio-prd-results'));
+  fields(value, ['version', 'prd', 'results']);
+  if (value.version !== 3 || !Array.isArray(value.results))
+    throw new Error('WORK_REPORT_FORMAT: navigation version/results');
+  const prd = textField(value.prd);
+  const seen = new Set<string>();
+  for (const item of value.results) {
+    const ref = record(item);
+    fields(ref, ['key', 'title', 'path', 'sha256']);
+    const key = identifier(textField(ref.key));
+    if (seen.has(key)) throw new Error('WORK_REPORT_FORMAT: duplicate result key');
+    seen.add(key);
+    textField(ref.title);
+    hashField(ref.sha256);
+    if (ref.path !== resultPath({ prd, key }))
+      throw new Error('WORK_REPORT_FORMAT: result location');
+  }
+  return value as unknown as ResultNavigation;
+}
+export function parseResultPage(source: string) {
+  const value = record(metadata(source, 'mio-prd-result'));
+  fields(value, ['version', 'prd', 'result']);
+  if (value.version !== 3) throw new Error('WORK_REPORT_FORMAT: result page version');
+  const prd = textField(value.prd);
+  return { prd, result: parseResult(value.result, prd, true) };
+}
+/** A reader can target the working tree or Git HEAD without changing result identity. */
+export async function loadBook(source: string, read: (path: string) => Promise<string | null>) {
+  if (record(metadata(source, 'mio-prd-results')).version === 2)
+    return { book: parseBook(source), details: {} as Record<string, string> };
+  const navigation = parseNavigation(source);
+  const details: Record<string, string> = {};
+  const results: PublicResult[] = [];
+  for (const ref of navigation.results) {
+    const bytes = await read(ref.path);
+    if (bytes === null || digest(bytes) !== ref.sha256)
+      throw new Error(`WORK_REPORT_RESULT: ${ref.path}`);
+    const page = parseResultPage(bytes);
+    if (
+      page.prd !== navigation.prd ||
+      page.result.key !== ref.key ||
+      page.result.title !== ref.title
+    )
+      throw new Error('WORK_REPORT_BINDING: result/navigation mismatch');
+    if (!(await sameMarkdown(bytes, renderResultPage(page.prd, page.result))))
+      throw new Error(`WORK_REPORT_INTEGRITY: result content ${ref.path}`);
+    details[ref.path] = bytes;
+    results.push(page.result);
+  }
+  const book: ResultBook = { version: 3, prd: navigation.prd, results };
+  if (!(await sameMarkdown(source, renderBook(book, details))))
+    throw new Error('WORK_REPORT_INTEGRITY: navigation content differs from its entries');
+  return { book, details };
+}
+async function sameMarkdown(actual: string, expected: string) {
+  const options = { parser: 'markdown', printWidth: 100 };
+  const texts = await Promise.all([format(actual, options), format(expected, options)]);
+  return texts[0] === texts[1];
+}
 export function parseDraft(source: string): ResultDraft {
   const value = record(metadata(source, 'mio-result-draft'));
   fields(value, ['version', 'prd', 'result']);
@@ -223,10 +291,13 @@ export async function readBook(root: string, prd: string, index: TaskIndex) {
     (source !== null && digest(source) !== ref?.sha256)
   )
     throw new Error('WORK_DELIVERY_CONFLICT: book/index mismatch');
-  const book = source === null ? { version: 2 as const, prd, results: [] } : parseBook(source);
+  const { book, details } =
+    source === null
+      ? { book: { version: 3 as const, prd, results: [] }, details: {} as Record<string, string> }
+      : await loadBook(source, (path) => optionalText(root, path));
   if (book.prd !== prd) throw new Error('WORK_REPORT_BINDING: PRD mismatch');
   for (const result of book.results) await resultFiles(root, result);
-  return { book, source };
+  return { book, source, details };
 }
 export async function resultFiles(root: string, result: PublicResult) {
   const files: Record<string, string> = {};
@@ -318,8 +389,27 @@ function resultBody(result: PublicResult, path: string, privateDraft = false) {
     .join('\n');
   return `## ${result.key}\n\n**${result.title}**\n\n${result.outcomes}\n\n必要决定：${result.decisions}\n\n限制：${result.limitations}\n\n受验候选：${result.version.candidate}；Git HEAD：${result.version.head ?? '未提交仓库'}。精确文件摘要与契约摘要见下方版本绑定，不把 HEAD 当作未提交内容的身份。\n\n${links}\n\n接受：${result.acceptance ? `${result.acceptance.statement}\n\n来源：${result.acceptance.reference}` : '待针对本候选的真实结果接受。'}\n`;
 }
-export function renderBook(book: ResultBook): string {
-  return `# 已接受开发成果\n\nPRD：[${label(book.prd)}](${link(reportPath(book.prd), book.prd)})。这里只汇总以下范围的已接受成果，不宣称整份 PRD、当前源码或生产验收完成。每项保留自己的受验版本；新工作不会自动继承旧通过。\n\n${book.results.map((result) => resultBody(result, reportPath(book.prd))).join('\n')}\n\`\`\`mio-prd-results\n${json(book)}\`\`\`\n`;
+export function renderResultPage(prd: string, result: PublicResult): string {
+  const path = resultPath({ prd, key: result.key });
+  return `# 已接受开发成果详情\n\nPRD：[${label(prd)}](${link(path, prd)})；[成果导航](${link(path, reportPath(prd))}#${result.key})。本页仅表示下面候选的接受范围，不代表当前源码或整份 PRD 完成。\n\n${resultBody(result, path)}\n\`\`\`mio-prd-result\n${json({ version: 3, prd, result })}\`\`\`\n`;
+}
+export function renderBook(book: ResultBook, details: Record<string, string>): string {
+  const navigation: ResultNavigation = {
+    version: 3,
+    prd: book.prd,
+    results: book.results.map((result) => {
+      const path = resultPath({ prd: book.prd, key: result.key });
+      if (details[path] === undefined) throw new Error(`WORK_REPORT_RESULT: ${path}`);
+      return { key: result.key, title: result.title, path, sha256: digest(details[path]!) };
+    }),
+  };
+  const entries = navigation.results
+    .map(
+      (ref) =>
+        `## ${ref.key}\n\n[${label(ref.title)}](${link(reportPath(book.prd), ref.path)})：按需读取结果、受验版本、决定、限制与必要依据。\n`,
+    )
+    .join('\n');
+  return `# 已接受开发成果\n\nPRD：[${label(book.prd)}](${link(reportPath(book.prd), book.prd)})。这里只导航已接受结果，不宣称整份 PRD、当前源码或生产验收完成。每项保留自己的受验版本；新工作不会自动继承旧通过。\n\n${entries}\n\`\`\`mio-prd-results\n${json(navigation)}\`\`\`\n`;
 }
 export function renderDraft(draft: ResultDraft): string {
   return `# 开发成果待接受草稿\n\nPRD：${label(draft.prd)}。本草稿留在个人记录，不能作为已完成结论。\n\n${resultBody(draft.result, reportPath(draft.prd), true)}\n\`\`\`mio-result-draft\n${json(draft)}\`\`\`\n`;
@@ -339,11 +429,12 @@ export async function checkReports(root: string, files: readonly string[]): Prom
     }
     if (source !== null) linked.add(indexPath);
     for (const entry of index.prds) {
-      const { book } = await readBook(root, entry.prd, index);
+      const { book, details } = await readBook(root, entry.prd, index);
       await checkedPath(root, book.prd);
       if ((await optionalText(root, book.prd)) === null)
         throw new Error('WORK_REPORT_SOURCE: PRD missing');
       linked.add(entry.report.path);
+      for (const path of Object.keys(details)) linked.add(path);
       for (const result of book.results)
         for (const evidence of result.evidence) linked.add(evidence.path);
     }

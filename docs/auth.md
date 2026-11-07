@@ -30,28 +30,7 @@ pnpm start
 
 ## HTTP 入口
 
-只开放下列认证路由，其他库插件、邮箱修改、邮件找回、账号删除及 OAuth 入口不隐式开放。所有 POST 必须携带允许的 Origin 和 JSON，正文最多 16 KiB、读取超时 10 秒。浏览器请求使用 `credentials: 'include'`。
-
-| 入口                                   | 输入与结果                                                                                                           |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `POST /api/auth/sign-up/email`         | `name,email,password`；邮箱归一化，密码 12–128 字符；成功建立账号与会话，emailVerified=false，客户端不能自授验证状态 |
-| `POST /api/auth/sign-in/email`         | `email,password`；成功签发会话 cookie，错误凭据返回 401                                                              |
-| `GET /api/auth/get-session`            | Cookie；返回会话和用户，无有效会话时返回 null；客户端通过此入口刷新 cookie                                           |
-| `POST /api/auth/sign-out`              | Cookie 与 `{}`；撤销当前会话并清除 cookie                                                                            |
-| `POST /api/auth/change-password`       | Cookie 与 `currentPassword,newPassword,revokeOtherSessions`；验证旧密码后修改，最后一项为 true 时撤销其他会话        |
-| `GET /api/auth/list-sessions`          | Cookie；只列当前用户会话                                                                                             |
-| `POST /api/auth/revoke-session`        | Cookie 与 `token`；只撤销当前用户的目标。不存在或其他用户目标也返回 `{status:true}`，不代表已删除目标                |
-| `POST /api/auth/revoke-other-sessions` | Cookie 与 `{}`；撤销当前用户其他会话                                                                                 |
-| `POST /api/auth/revoke-sessions`       | Cookie 与 `{}`；撤销当前用户全部会话                                                                                 |
-| `GET /api/v1/me`                       | Cookie；数据库校验后返回 `{userId,sessionId}`。无效/过期/撤销或仅有服务 token 时返回 401                             |
-
-cookie 使用 HttpOnly、SameSite=Lax，HTTPS 配置带 Secure，不设置跨域 cookie domain。固定 BASE_URL，不信任 Host/转发头决定 URL。前端与服务应同站点或同源反向代理部署；Origin 白名单不会让不同站点的浏览器发送 Lax cookie。当前没有浏览器页面或浏览器验收。
-
-会话默认 7 天、1 天后可刷新；禁用 cookie 会话缓存，身份与撤销查询以 DB 为准。`/api/v1/me` 只校验身份，不刷新会话；客户端经 `/api/auth/get-session` 同时续期 DB 与 cookie。数据库池和路由随插件生命周期初始化/释放；重载且 secret/数据库不变时会话继续有效。
-
-认证库响应沿固定版本契约，错误通常为 `{code,message}`，限流等保留库响应；适配器的 Origin、方法、正文或基础设施错误采用 `{error:{code,message,requestId}}`。所有响应带 `X-Request-Id`、`Cache-Control: no-store`，消费者按入口与 HTTP 状态处理，不能假定与旧 foundation 错误体完全相同。
-
-限流采用直接连接地址，覆盖客户端传来的 IP 头：登录每分钟 10 次、注册每分钟 5 次；其他入口沿用库的全局及敏感操作规则，计数存入 DB。代理后的客户端共享代理地址限额，正式部署需要在可信边缘配置限流；当前未验证任意代理链或多实例容量。库自身 CSRF 和适配器 Origin 检查均保留。
+现行接口的身份、输入输出、错误和副作用在[认证 HTTP 契约](apis/auth.md)唯一维护；Foundation 服务凭据接口另见[Foundation 域](apis/foundation.md)。本章节保留旧导航，配置和迁移仍由本页维护。
 
 ## 职责与限制
 

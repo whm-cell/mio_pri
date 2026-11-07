@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { unified } from 'unified';
-import remarkParse from 'remark-parse';
+import { nodeText, parseMarkdown } from '../markdown.ts';
 import { checkedPath } from './records.ts';
 import type { Task } from './records.ts';
 
@@ -35,21 +34,10 @@ const sections: Record<string, [string, string][]> = {
   ],
 };
 
-interface MarkdownNode {
-  type: string;
-  value?: string;
-  depth?: number;
-  position?: { start: { offset?: number } };
-  children?: MarkdownNode[];
-}
-
-const nodeText = (node: MarkdownNode): string =>
-  node.value ?? node.children?.map(nodeText).join('') ?? '';
-
 /** Parse heading boundaries, so another mode or an example heading inside a code fence is never expanded. */
 async function section(root: string, file: string, title: string) {
   const source = await readFile(await checkedPath(root, file), 'utf8');
-  const nodes = (unified().use(remarkParse).parse(source) as MarkdownNode).children ?? [];
+  const nodes = parseMarkdown(source).children ?? [];
   const matches = nodes.filter((node) => node.type === 'heading' && nodeText(node) === title);
   if (matches.length !== 1) throw new Error(`WORK_GUIDE_SECTION: ${file}: expected one ${title}`);
   const heading = matches[0]!;

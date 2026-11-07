@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
-import { evidenceRoot, indexPath, optionalText, reportPath } from './reports.ts';
+import { evidenceRoot, indexPath, optionalText, reportPath, resultPath } from './reports.ts';
 
 interface Change {
   path: string;
@@ -45,7 +45,9 @@ export async function loadOperation(root: string, id: string) {
     path === `.work/tasks/${id}/state.json` ||
     (task.delivery?.version === 2 &&
       target &&
-      (path === reportPath(target.prd) || path.startsWith(`${evidenceRoot(target)}/`))) ||
+      (path === reportPath(target.prd) ||
+        path === resultPath(target) ||
+        path.startsWith(`${evidenceRoot(target)}/`))) ||
     (task.delivery?.version === 1 &&
       (path.startsWith(`docs/tasks/complete/${id}/`) ||
         path.startsWith(`docs/tasks/pending/${id}/`))) ||

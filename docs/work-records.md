@@ -19,6 +19,8 @@
 
 ## 创建任务
 
+先从[资料导航](index.md)选相关需求/契约，查[PRD 成果索引](tasks/index.md)的已有结果，再登记实际遵循的 sources。仅可验收开发能力设置 `plan.result={prd,key}`；维护任务不设 result，验证后按需 archive。不要默认读取全部成果或历史。
+
 Agent 依 [拆解与生命周期](coordination.md#开始任务) 从公共 PRD／规格和当前用户目标形成执行任务，再调用 `pnpm work ensure --stdin`。下面是字段示例，不是预先决定的任务：
 
 ```json
@@ -182,6 +184,8 @@ ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 upd
 中断时原样重试原 v2 prepare／complete 请求，工具依据 journal 恢复；未受干扰的同一请求幂等。修改后的索引、汇总、附件或状态拒绝覆盖，未结束操作阻止其他记录写入。已完成请求也不重写被人恢复的旧字节；后续存在合法更新时读取当前成果，不重放旧快照。reopen 只更新个人状态，不改公共事实。公开格式、链接与完整性单独检查，输出排除不是免检。
 
 ## 发送与接收
+
+公共成果的 v3 导航/详情格式与旧 v2 存储维护方法见[工具实现边界](engineering/work-tooling.md#v2-公共成果存储维护)；不在单成果 complete 中迁移兄弟详情。
 
 ```sh
 pnpm work handoff api-probe

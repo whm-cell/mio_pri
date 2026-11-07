@@ -8,7 +8,7 @@ import {
   evidenceRoot,
   hashField,
   indexPath,
-  parseBook,
+  loadBook,
   parseDraft,
   readBook,
   readDraft,
@@ -17,7 +17,9 @@ import {
   renderBook,
   renderDraft,
   renderIndex,
+  renderResultPage,
   reportPath,
+  resultPath,
   resultFiles,
   textField,
 } from './reports.ts';
@@ -184,8 +186,17 @@ async function preservePrevious(root: string, prd: string, previous: PublicResul
     maxBuffer: 16 * 1024 * 1024,
   });
   let saved: PublicResult | undefined;
-  if (result.status === 0)
-    saved = parseBook(result.stdout).results.find((entry) => entry.key === previous.key);
+  if (result.status === 0) {
+    const loaded = await loadBook(result.stdout, async (file) => {
+      const bytes = spawnSync('git', ['show', `HEAD:${file}`], {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      return bytes.status === 0 ? bytes.stdout : null;
+    });
+    saved = loaded.book.results.find((entry) => entry.key === previous.key);
+  }
   if (!saved || json(saved) !== json(previous))
     throw new Error(
       `WORK_DELIVERY_HISTORY: commit the previous accepted result before replacing ${previous.key}`,
@@ -222,7 +233,11 @@ async function complete(
     reference: textField(acceptance.reference),
   };
   const { index, source: indexBefore } = await readIndex(root);
-  const { book, source: bookBefore } = await readBook(root, draft.prd, index);
+  const { book, source: bookBefore, details } = await readBook(root, draft.prd, index);
+  if (book.version === 2 && book.results.some((entry) => entry.key !== draft.result.key))
+    throw new Error(
+      'WORK_DELIVERY_LEGACY: migrate the v2 navigation before publishing alongside sibling results',
+    );
   const previous = book.results.find((entry) => entry.key === draft.result.key);
   const previousFiles = previous ? await resultFiles(root, previous) : {};
   if (previous && json(previous) !== json(draft.result))
@@ -240,9 +255,13 @@ async function complete(
     .filter((entry) => entry.key !== draft.result.key)
     .concat(draft.result);
   book.results.sort((a, b) => a.key.localeCompare(b.key));
+  const detail = resultPath(task.plan.result!);
+  outputs[detail] = publicText(await markdown(renderResultPage(draft.prd, draft.result)));
+  expected[detail] = details[detail] ?? null;
+  details[detail] = outputs[detail]!;
   const path = reportPath(draft.prd);
-  const source = publicText(await markdown(renderBook(book)));
-  parseBook(source);
+  const source = publicText(await markdown(renderBook(book, details)));
+  await loadBook(source, async (file) => details[file] ?? null);
   outputs[path] = source;
   expected[path] = bookBefore;
   index.prds = index.prds

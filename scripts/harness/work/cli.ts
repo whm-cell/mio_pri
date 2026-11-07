@@ -101,6 +101,7 @@ async function main() {
         id: task.plan.id,
         goal: task.plan.goal,
         requirement: task.plan.requirement,
+        ...(task.plan.result ? { result: task.plan.result } : {}),
         stage: task.stage,
         archived: task.archived,
         nextAction: task.plan.nextAction,

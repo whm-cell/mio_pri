@@ -2,6 +2,7 @@
 
 独立 TypeScript 插件包，由官方 DeepSeek Harness Profile 启动。当前交付是工程护栏、HTTP 探针、受认证保护的能力查询与全部拒绝的工具策略；还没有 AI 漫剧业务和对话接口。
 
+- [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)
 - [AI 漫剧技术底座 PRD（待评审）](docs/prd-ai-drama-foundation.md)
 - [HTTP API](docs/api.md)

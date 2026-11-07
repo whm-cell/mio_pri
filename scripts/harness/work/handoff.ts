@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { capture, contractIssues } from './context.ts';
 import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
-import { deliveryOutput, parseBook, reportPath, resultFiles } from './reports.ts';
+import { deliveryOutput, loadBook, reportPath, resultFiles } from './reports.ts';
 import { historicalPath, optionalText, parseReport } from './legacy-reports.ts';
 import { draft } from './records.ts';
 
@@ -81,7 +81,7 @@ export async function receive(root: string, source: string, key?: string) {
     throw new Error('WORK_HANDOFF_PATH: retrieve the shared Markdown into .work/inbox/ or docs/');
   const markdown = await readFile(await checkedPath(root, source), 'utf8');
   if (source.startsWith('docs/tasks/complete/') && source.endsWith('/report.md')) {
-    const book = parseBook(markdown);
+    const { book } = await loadBook(markdown, (path) => optionalText(root, path));
     if (source !== reportPath(book.prd))
       throw new Error('WORK_REPORT_FORMAT: PRD/book location mismatch');
     const result =

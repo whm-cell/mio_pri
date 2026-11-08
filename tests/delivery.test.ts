@@ -417,7 +417,10 @@ it('adds siblings and replaces only a newly accepted key without requiring a com
       revision: digest(loaded.raw),
       reason: 'Fixture user requests repair',
       reopen: true,
-      plan: { authorization: 'Repair this capability.' },
+      plan: {
+        authorization: 'Repair this capability.',
+        nextAction: 'Reconcile the repair scope and current candidate.',
+      },
     }),
   );
   expect((await results(root)).results[0]).toEqual(alpha);
@@ -527,6 +530,32 @@ it.each([0, 1, 2])(
     expect(await publicFiles(root)).toEqual(before);
   },
 );
+
+it('prioritizes an unfinished delivery over stale update and ensure conflicts without a recovery deadlock', async () => {
+  const root = await fixture();
+  const requirement = { source: 'docs/api.md', section: 'API', key: 'probe' };
+  const id = `probe-${digest(json([requirement.source, requirement.key])).slice(0, 16)}`;
+  await setup(root, id);
+  const request = await prepareRequest(root, id);
+  await deliver(root, id, json(request));
+  await rewind(root, id, 0);
+  const stateBefore = (await loadTask(root, id)).raw;
+  const stale = invoke(root, ['update', id, '--stdin'], {
+    revision: '0'.repeat(64),
+    reason: 'This obsolete update must not obstruct journal recovery.',
+  });
+  expect(stale.stderr).toContain('WORK_DELIVERY_PENDING');
+  const ensured = invoke(root, ['ensure', '--stdin'], { requirement });
+  expect(ensured.stderr).toContain('WORK_DELIVERY_PENDING');
+  await expect(readFile(join(root, `.work/tasks/${id}/conflict.json`))).rejects.toHaveProperty(
+    'code',
+    'ENOENT',
+  );
+  expect((await loadTask(root, id)).raw).toBe(stateBefore);
+  const replay = invoke(root, ['deliver', id, '--stdin'], request);
+  expect(replay.status, replay.stderr).toBe(0);
+  expect(JSON.parse(replay.stdout).readyForAcceptance).toBe(true);
+});
 
 it.each([0, 1, 2, 3, 4])(
   'recovers completion interrupted after %i writes without duplicate results',

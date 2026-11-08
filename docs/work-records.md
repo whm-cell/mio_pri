@@ -46,7 +46,7 @@ Agent 依 [拆解与生命周期](coordination.md#开始任务) 从公共 PRD／
 
 返回 created、revision、task 摘要及 assessment。首次自动建立本工作区的 member.json；本地成员标签由真实工作区路径摘要生成，不代表人员认证。已有成员标签沿用，错误归属或复制到其他位置的目录仍拒绝；每人在自己的 checkout/worktree 操作。
 
-requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；文档必须是实际公共 Markdown，章节语义及任务是否重复由 Agent 判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
+requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；新建须对应当前公共 Markdown 中唯一的真实标题文字，内联格式按 AST 读取，围栏里的假标题不算；标题可定位不证明需求语义正确，任务是否重复仍由实际审阅判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
 
 plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance、nextAction 和 stopCondition 来自真实任务。scope 是允许写入的文件／目录；inputs 默认 package.json 与 harness.config.json，再补实际依赖；sources 只登记实际遵循的需求子文档，requirement.source 自动参与文件摘要。method 为 automated／review／behavior。其余字段由生成器提供，按需填 decisions、dependencies、blockers 与 sharedRef，不复制整套空模板。示例不授予业务修改权限，脚本也不能认证授权文本的来源。
 
@@ -90,13 +90,17 @@ pnpm work guide start --section 'docs/coordination.md#开始任务'
 }
 ```
 
-update 可改上述 plan 字段和非释放阶段（C1_IMPLEMENTATION／C1_EVIDENCE_PENDING），不允许写入 id、requirement、member、workspace、checkpoint、evidence、人类接受或释放结论。数组按字段整体替换，未提交字段保持原值。过期 revision、未知字段或非法值拒绝保存；冲突时先取新 context 核对，不能机械重试覆盖。stage 进入实施前须已有有效契约和现场核对。reason 记录实际变化或核对理由，不为每次读取写日志。
+update 可改上述 plan 字段和非释放阶段（C1_IMPLEMENTATION／C1_EVIDENCE_PENDING），切换阶段或 reopen 须同时提供非空 plan.nextAction。已有定位可用 `plan.requirement={section:"实际标题"}` 更正，仅接受 section，保留 source/key/ID；更正进入候选，不重绑旧证据。id、member、workspace、checkpoint、evidence、人类接受或释放结论仍不可写。数组按字段整体替换，未提交字段保持原值。过期 revision、未知字段或非法值拒绝保存；冲突时先取新 context 核对，不能机械重试覆盖。stage 进入实施前须已有有效契约和现场核对。reason 记录实际变化或核对理由，不为每次读取写日志。
+
+每次成功写入都可能改变 revision，不沿用 sync、exec、run 或 evidence 之前的旧 revision。WORK_CONFLICT 不覆盖 Task；工具在该任务的 `conflict.json` 保留一份未解决事实，context/check 报 WORK_RECONCILE，后续写操作在副作用前拒绝。按错误给出的精确路径读回执并对照当前 context；只有当前 revision、非空 reason 的合法 update 成功保存后，才将原冲突纳入现有 notes 并清回执。仅读取、sync 或新成功不清除它；若 update 改了契约，解消后仍需审阅和 sync，不要求先让旧候选通过。
+
+未完成 delivery journal 优先沿原请求恢复，不叠加冲突回执；不得删 journal／回执绕过。回执写入失败保留命令占用，按命令恢复入口核对；更新已保存但清回执失败时保留事实，重读当前 revision 再对账。正常操作不增加审批或每命令 revision 参数；回执不复制计划、候选和证据，也不是“已读 context”的证明。
 
 契约修改保留旧 checkpoint 与历史证据，并撤回旧接受／释放结论；Agent 审阅变化后再 sync，不能用 update 顺带承认未知代码变化。只改下一步且候选不变可沿用原证据。归档记录默认只读，确有当前授权时用 `reopen: true` 和非空 `plan.authorization` 显式重开，再核对及 sync。旧记录同样可用 update，不强制补 requirement。
 
 check 只读；退出码按完整现场核验决定，缺失契约、依赖未就绪、归档、上下文或非法释放结论返回非零。有省略内容时还须按上述引用补全上下文；evidence 单独报告验收结果，ready 为 true 不表示任务已完成。
 
-sync 只更新检查点，保留历史证据。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
+sync 更新检查点，保留历史证据；执行后刷新阶段后继，即使本次核对没有内容变化，也不能保留已经完成的同步动作，不代替业务规划。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
 
 文件摘要覆盖固定公共策略文件和任务声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不默认塞入全部操作手册，旧来源继续兼容。新公共包的精确输入可写为 `docs/tasks/<名称>/complete/records.json#result=<key>`，只绑定该成果的简洁记录；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。运行期间对同一物理包的写入仍会触发 inputStamp 的保守变更检测。
 
@@ -128,16 +132,26 @@ pnpm work exec api-probe -- sh -c 'printf "%s\n" "document text" > docs/example.
 
 ## 记录证据
 
+原件准备的阶段与写入方式统一见[验证与接受](coordination.md#验证与接受)；以下命令登记已有原件，不替代其准备步骤。
+
 ```sh
 pnpm work run api-probe checks -- pnpm check
 pnpm work evidence api-probe review pass .work/tasks/api-probe/evidence/review.md "实际审查范围、观察与限制"
 ```
 
-checks 或 review 必须是本任务 acceptance ID。run 只用于 automated，按 argv 启动不经 Shell，不解释管道或重定向，且必须在授权内。每次保存新的原件、退出码、取消／未结束标记、候选和 Node／平台环境，失败、中断或可观察的输入变化不记录通过。执行未确认结束或输入变化记 pending；取消且已结束记 fail。它会比较前后字节及已有文件／源目录的身份和变更时间；不是沙箱或完整中间行为证明。原件登记完成前遵守[验证与接受](coordination.md#验证与接受)的串行写入要求。
+run／evidence 必须先经 update 进入 C1_EVIDENCE_PENDING 并声明当前下一步；旧释放补证也先作该转换，失败的阶段更新不能由 run 自动补成成功。checks 或 review 必须是本任务 acceptance ID。run 只用于 automated，按 argv 启动不经 Shell，不解释管道或重定向，且必须在授权内。每次保存新的原件、退出码、取消／未结束标记、候选和 Node／平台环境，失败、中断或可观察的输入变化不记录通过。执行未确认结束或输入变化记 pending；取消且已结束记 fail。它会比较前后字节及已有文件／源目录的身份和变更时间；不是沙箱或完整中间行为证明。原件登记完成前遵守[验证与接受](coordination.md#验证与接受)的串行写入要求。
 
 执行组未确认结束时，后代仍可能向日志写入。此时保留活动原始日志，仅将不可变的未知观察（候选、命令、原始日志位置和未结束事实）登记为 pending，撤回旧通过／接受；不把仍在变化的日志哈希当稳定原件。恢复时核对原日志与进程，不能只凭后来的追加输出升级通过。
 
-evidence 只用于 review／behavior，登记本任务 evidence 目录的真实原件或已取回的共享 Markdown。原件需写实际操作者、场景、输入／环境、动作、结果和限制；记录器只绑定哈希和本机环境，不认证独立性或业务真实性。
+evidence 只用于 review／behavior，登记本任务 evidence 目录的真实原件或已取回的共享 Markdown。原件需写实际操作者、场景、输入／环境、动作、结果和限制。CLI 拒绝符号链接、硬链接别名和非普通文件，并按现存文件身份核对输入重叠及历史原件，不能通过大小写路径别名重登改写后的原件。共享原件同时属于候选输入时，先取回独立私有副本再绑定，避免原件声明进入自身候选。新观察另存，旧原件及失败保留；缺失的旧原件不阻止新路径补证。单任务占用标记只串行化 CLI，不认证宿主编辑者，原件归属沿[验证与接受](coordination.md#验证与接受)执行。
+
+普通 review／behavior 原件附一个 `mio-evidence` 代码块，声明观察时的 candidate、acceptance 中的 criterion 和 result（pass／fail／pending）。例如以下未执行模板：
+
+```mio-evidence
+{"candidate":"实际受验候选的64位SHA256","criterion":"本任务验收ID","result":"pending"}
+```
+
+登记和后续 check／交付均核对声明与当前候选、验收项、命令结论及原件摘要；缺声明或旧候选不能在登记时自动套用当前候选。`quality-review` 和 `norms-review` 继续用下述专用块，不重复附通用块。旧原件可读且不批量改写，但无匹配声明不能作为当前候选的通过证据；这不改写历史接受事实。结构与哈希核对不认证独立性或观察真实。
 
 `quality-review` 原件在普通 Markdown 中附一个 `mio-quality-review` 代码块。下面是未执行的模板，须由实际审查替换，不能原样填 pass：
 
@@ -216,7 +230,7 @@ requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 
 
 需求、各规范页和 accepted 的 result 只能是 pass/fail/pending，总体按 fail 优先、其次 pending、全部通过才 pass 推导，并须与 conclusion 及 evidence 命令参数相同。缺三方项、缺来源／规范页、不匹配候选、声明或页面摘要、空观察均拒绝。accepted 中 PRD/key/候选仅检查结构，不认证成果存在或接受真实；实际依赖另用 inputs 绑定，不能把原件当作实时镜像。旧声明和原件读取兼容；新登记必须先显式 update norms 到 v2、核对变化并 sync，旧通过不转移。
 
-当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时可显式补证，保存后重置接受并回到 C1_EVIDENCE_PENDING，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
+当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时先经 update 回到 C1_EVIDENCE_PENDING 并撤回当前接受，再显式补证，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
 
 ## 交付命令
 

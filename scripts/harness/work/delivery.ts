@@ -31,7 +31,7 @@ async function verified(root: string, task: Task, candidate?: string, publishing
     resolvePrd(task.plan.result.prd, await documentCatalog(root)) !== task.plan.result.prd
   )
     throw new Error('WORK_RESULT: reconcile result.prd to its stable identity using work update');
-  const assessment = await assess(root, task, false);
+  const assessment = await assess(root, task, { inspectDelivery: false });
   if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
   const normsErrors = await normsIssues(root, task.plan, true);
   if (normsErrors.length) throw new Error(normsErrors.join('\n'));
@@ -129,6 +129,8 @@ async function prepare(
   task.reviewDecision = 'PENDING';
   task.stage = 'C1_EVIDENCE_PENDING';
   task.releaseDisposition = 'HOLD_FOR_HUMAN_REVIEW';
+  task.plan.nextAction =
+    'Return the current private draft for actual acceptance of this candidate.';
   task.notes.push(`Prepared private v5 draft ${digest(source)}; acceptance remains pending.`);
   await commitDelivery(root, task, raw, token, 'prepare', { [path]: source }, {});
   return { revision: digest(json(task)), draft: task.delivery!.draft, readyForAcceptance: true };
@@ -187,6 +189,8 @@ async function complete(
   task.reviewDecision = 'ACCEPT';
   task.releaseDisposition = 'RELEASED';
   task.plan.sharedRef = `${paths.report}#${result.key}`;
+  task.plan.nextAction =
+    'Read back the accepted result and finish this task; a new objective needs its own authorization.';
   task.notes.push(`Accepted ${accepted.candidate}; ${acceptance.reference}`);
   await commitDelivery(root, task, raw, token, 'complete', outputs, expected);
   return {

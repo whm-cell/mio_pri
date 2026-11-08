@@ -14,8 +14,8 @@ import { handoff, receive } from './handoff.ts';
 import { guide } from './guide.ts';
 import { ensureTask, inspectTask, updateTask } from './manage.ts';
 import { deliver } from './delivery.ts';
-import { qualityCriterion, qualityReviewResult } from './quality-review.ts';
-import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.ts';
+import { normsCriterion, normsIssues } from './norms-review.ts';
+import { checkManualOriginal, manualEvidenceResult } from './manual-evidence.ts';
 import { inventory, loadConfig } from '../inventory.ts';
 import { inspectTaskDocuments } from '../task-documents.ts';
 import { checkDocuments } from '../check-documents.ts';
@@ -204,6 +204,10 @@ async function main(activity?: CommandActivity) {
       return;
     }
     const outcome = await runCommand(root, args.slice(2), 'inherit', activity!);
+    task.plan.nextAction = outcome.unsettled
+      ? 'Confirm the execution group has stopped and reconcile the retained command marker and actual changes.'
+      : 'Inspect the command exit and actual changes; finish authorized changes, then sync and enter verification.';
+    await saveTask(root, task, raw);
     if (outcome.error) throw outcome.error;
     process.exitCode = outcome.cancelled || outcome.unsettled ? 1 : (outcome.status ?? 1);
     console.log(
@@ -224,6 +228,12 @@ async function main(activity?: CommandActivity) {
       `${new Date().toISOString()} ${args[1]}; candidate ${task.checkpoint.candidate}`,
     );
     if (task.stage === null && !contractIssues(task).length) task.stage = 'C0_READY';
+    task.plan.nextAction =
+      task.stage === 'C1_EVIDENCE_PENDING'
+        ? 'Review evidence for the current candidate, resolve failed or missing observations, then return the result.'
+        : task.stage === 'C1_RELEASED'
+          ? 'Read back the accepted result and finish this task; do not infer a new implementation mandate.'
+          : 'Confirm the current scope and authorization; continue implementation or explicitly enter verification when ready.';
     await saveTask(root, task, raw);
     const result = await assess(root, task);
     console.log(json(assessmentOutput(task, result, digest(json(task)))));
@@ -233,17 +243,17 @@ async function main(activity?: CommandActivity) {
   if (command === 'archive') {
     if (args.length !== 2 || !args[1]!.trim()) throw new Error(help);
     task.archived = true;
+    task.plan.nextAction =
+      'Archived history; inspect a new request and current authorization before explicitly reopening.';
     task.notes.push(`${new Date().toISOString()} archived: ${args[1]}; stage ${task.stage}`);
     await saveTask(root, task, raw);
     return console.log('Archived in place; records, failures and artifacts retained.');
   }
   if (!['run', 'evidence'].includes(command)) throw new Error(help);
-  // An explicit evidence refresh must be possible even when the old release lost its artifacts.
-  if (task.stage === 'C1_RELEASED' || task.releaseDisposition === 'RELEASED') {
-    task.stage = 'C1_EVIDENCE_PENDING';
-    task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
-    task.reviewDecision = 'PENDING';
-  }
+  if (task.stage !== 'C1_EVIDENCE_PENDING')
+    throw new Error(
+      'WORK_VERIFY_STAGE: inspect context and use update with the current nextAction to enter C1_EVIDENCE_PENDING before collecting evidence',
+    );
   const state = await assess(root, task);
   if (!state.ready) {
     console.error(json(assessmentOutput(task, state, digest(raw))));
@@ -262,30 +272,28 @@ async function main(activity?: CommandActivity) {
         'WORK_EVIDENCE: automated checks use work run; other evidence needs result, artifact and summary',
       );
     const bytes = await artifact(root, task.plan.id, args[3]!);
-    if (
-      criterion.id === qualityCriterion.id &&
-      qualityReviewResult(bytes.toString('utf8'), state.candidate) !== args[2]
-    )
-      throw new Error('WORK_QUALITY_EVIDENCE: declared result disagrees with review dimensions');
+    const sha256 = digest(bytes);
+    await checkManualOriginal(root, task, args[3]!, sha256);
     if (criterion.id === normsCriterion.id) {
       const issues = await normsIssues(root, task.plan, true);
       if (issues.length) throw new Error(issues.join('\n'));
-      if (
-        (await normsReviewResult(
-          root,
-          bytes.toString('utf8'),
-          task.plan,
-          await capture(root, task),
-        )) !== args[2]
-      )
-        throw new Error('WORK_NORMS_EVIDENCE: declared result disagrees with normative review');
     }
+    if (
+      (await manualEvidenceResult(
+        root,
+        bytes.toString('utf8'),
+        task.plan,
+        task.checkpoint!,
+        criterion.id,
+      )) !== args[2]
+    )
+      throw new Error('WORK_EVIDENCE: declared result disagrees with original');
     addEvidence(task, {
       criterion: criterion.id,
       method: criterion.method,
       result: args[2]!,
       artifact: args[3]!,
-      sha256: digest(bytes),
+      sha256,
       candidate: state.candidate,
       summary: args[4]!,
       environment: environment(),
@@ -356,6 +364,12 @@ async function main(activity?: CommandActivity) {
     summary: `${json(argv).trim()}; exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
     environment: environment(),
   });
+  if (outcome.unsettled)
+    task.plan.nextAction =
+      'Confirm the execution group has stopped, inspect the provisional log, then recover the retained command marker before continuing.';
+  else if (changed)
+    task.plan.nextAction =
+      'Inspect the observed input changes and current authorization before sync and verification of the resulting candidate.';
   await saveTask(root, task, raw);
   console.log(
     `${passed ? 'PASS' : 'NOT PASSED'}: ${evidencePath}${changed ? '; WORK_CONTEXT_CHANGED during command' : ''}`,

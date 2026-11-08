@@ -66,13 +66,20 @@ async function fixture(scope = ['src'], development = true) {
       inputs: ['src'],
       authorization: 'Fixture user authorizes local changes and checks.',
       acceptance: [{ id: 'checks', method: 'automated', criterion: 'Fixture check succeeds.' }],
-      nextAction: 'Implement and verify.',
+      nextAction: 'Collect fixture checks and reviews.',
       stopCondition: 'Return for human acceptance.',
     },
   };
   const created = cli(root, ['ensure', '--stdin'], request);
   expect(created.status, created.output).toBe(0);
   const id = JSON.parse(created.output).task.id as string;
+  const verification = cli(root, ['update', id, '--stdin'], {
+    revision: JSON.parse(created.output).revision,
+    reason: 'Verify the existing fixture candidate and its review protocol.',
+    stage: 'C1_EVIDENCE_PENDING',
+    plan: { nextAction: 'Collect fixture checks and reviews.' },
+  });
+  expect(verification.status, verification.output).toBe(0);
   const path = join(root, `.work/tasks/${id}/state.json`);
   const state = async (): Promise<Task> => JSON.parse(await readFile(path, 'utf8'));
   const context = () => JSON.parse(cli(root, ['context', id, 'verify']).output);
@@ -354,6 +361,13 @@ it('requires actual candidate-bound normative page observations and rejects old 
   await writeFile(join(f.root, 'docs/api.md'), '# Updated current API\n');
   expect(cli(f.root, ['check', f.id]).status).toBe(1);
   expect(
+    cli(f.root, ['update', f.id, '--stdin'], {
+      revision: f.context().revision,
+      reason: 'The same API requirement now has its updated real heading.',
+      plan: { requirement: { section: 'Updated current API' } },
+    }).status,
+  ).toBe(0);
+  expect(
     cli(f.root, ['sync', f.id, 'Reviewed normative edits before taking new evidence.']).status,
   ).toBe(0);
   expect(f.context().assessment.normsReview.result).toBe('pending');
@@ -551,9 +565,11 @@ it('rejects missing reconciliation dimensions, bad source binding and fail or pe
   expect(update.status, update.output).toBe(0);
   expect(cli(f.root, ['sync', f.id, 'Inspected the v2 contract.']).status).toBe(0);
   const report = normsFixture(await f.state());
-  const path = `.work/tasks/${f.id}/evidence/dimensions.md`;
-  await mkdir(dirname(join(f.root, path)), { recursive: true });
+  const directory = `.work/tasks/${f.id}/evidence`;
+  await mkdir(join(f.root, directory), { recursive: true });
+  let observation = 0;
   const submit = async (value: unknown, declared = 'pass') => {
+    const path = `${directory}/dimensions-${observation++}.md`;
     await writeFile(join(f.root, path), normsMarkdown(value));
     return cli(f.root, [
       'evidence',
@@ -608,6 +624,8 @@ it('rejects missing reconciliation dimensions, bad source binding and fail or pe
   };
   expect((await submit(pending, 'pending')).status).toBe(0);
   expect(f.context().assessment.normsReview.result).toBe('pending');
+  const pendingEntry = (await f.state()).evidence.at(-1)!;
+  const pendingOriginal = await readFile(join(f.root, pendingEntry.artifact), 'utf8');
   const failed = {
     ...report,
     accepted: { ...report.accepted, result: 'fail' },
@@ -617,6 +635,11 @@ it('rejects missing reconciliation dimensions, bad source binding and fail or pe
   const acceptedFailure = await submit(failed, 'fail');
   expect(acceptedFailure.status, acceptedFailure.output).toBe(0);
   expect(f.context().assessment.normsReview.result).toBe('fail');
+  expect(await readFile(join(f.root, pendingEntry.artifact), 'utf8')).toBe(pendingOriginal);
+  expect((await f.state()).evidence.slice(-2).map((entry) => entry.result)).toEqual([
+    'pending',
+    'fail',
+  ]);
   // Bypass the registration entry only to show that later assessment does not trust a forged pass.
   const task = await f.state();
   task.evidence.at(-1)!.result = 'pass';

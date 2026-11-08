@@ -278,7 +278,15 @@ it('uses the same critical scope view for context, check and sync', async () => 
 
 it('reads one ledger-bound failed original in exact Unicode segments and reports corruption', async () => {
   const root = await fixture();
-  const { id } = await ready(root);
+  const { id, result } = await ready(root);
+  expect(
+    invoke(root, ['update', id, '--stdin'], {
+      revision: result.revision,
+      reason: 'Collect the fixture original for progressive reading.',
+      stage: 'C1_EVIDENCE_PENDING',
+      plan: { nextAction: 'Run the fixture check and inspect its original.' },
+    }).status,
+  ).toBe(0);
   const failed = invoke(root, [
     'run',
     id,
@@ -355,6 +363,14 @@ it('bounds rejected request errors without echoing a huge path or mutating the r
   expect(receive.status).toBe(1);
   expect(receive.output).toContain('WORK_HANDOFF_PATH');
   expect(receive.output).not.toContain('/errors');
+  expect(
+    invoke(root, ['update', id, '--stdin'], {
+      revision: result.revision,
+      reason: 'Test invalid artifact reporting in the verification phase.',
+      stage: 'C1_EVIDENCE_PENDING',
+      plan: { nextAction: 'Inspect the invalid fixture artifact.' },
+    }).status,
+  ).toBe(0);
   const invalidOriginal = invoke(root, [
     'evidence',
     id,

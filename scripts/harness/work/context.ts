@@ -6,9 +6,12 @@ import { checkedPath, deliveryPending, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
 import { compactInputs, deliveryOutput, readDraft, readResultInput } from './reports.ts';
 import { hasResultSelector, parseSelector, recordsFile } from './compact-store.ts';
-import { needsQualityReview, qualityCriterion, qualityReviewResult } from './quality-review.ts';
+import { needsQualityReview, qualityCriterion } from './quality-review.ts';
 import { documentCatalog, resolveDocument } from '../task-documents.ts';
-import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.ts';
+import { normsCriterion, normsIssues } from './norms-review.ts';
+import { requirementIssues } from './requirements.ts';
+import { readConflict } from './reconciliation.ts';
+import { manualEvidenceResult } from './manual-evidence.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 
@@ -153,12 +156,25 @@ export async function artifact(root: string, id: string, path: string): Promise<
   )
     throw new Error("WORK_ARTIFACT: use this task's evidence directory or a shared document");
   if (path.startsWith('docs/tasks/')) resolveDocument(path, await documentCatalog(root));
-  return readFile(await checkedPath(root, path));
+  const absolute = await checkedPath(root, path);
+  const stat = await lstat(absolute);
+  if (!stat.isFile() || stat.nlink !== 1)
+    throw new Error('WORK_ARTIFACT: original must be a regular file with no hard-link aliases');
+  return readFile(absolute);
 }
 
-export async function assess(root: string, task: Task, inspectDelivery = true) {
+export async function assess(
+  root: string,
+  task: Task,
+  options: { inspectDelivery?: boolean; reconciling?: boolean } = {},
+) {
+  const { inspectDelivery = true, reconciling = false } = options;
   const current = await capture(root, task);
-  const errors = contractIssues(task);
+  const errors = [...contractIssues(task), ...(await requirementIssues(root, task.plan))];
+  if (!reconciling && (await readConflict(root, task.plan.id)) !== null)
+    errors.push(
+      `WORK_RECONCILE: unresolved conflict at .work/tasks/${task.plan.id}/conflict.json; inspect current context, then update using its revision and a reconciliation reason`,
+    );
   if (inspectDelivery && (await deliveryPending(root, task.plan.id)))
     errors.push('WORK_DELIVERY_PENDING: resume the original delivery request');
   const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
@@ -200,18 +216,16 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
       try {
         const bytes = await artifact(root, task.plan.id, entry.artifact);
         if (digest(bytes) !== entry.sha256) result = 'corrupt';
-        else if (criterion.id === qualityCriterion.id) {
-          try {
-            if (qualityReviewResult(bytes.toString('utf8'), current.candidate) !== entry.result)
-              result = 'invalid';
-          } catch {
-            result = 'invalid';
-          }
-        } else if (criterion.id === normsCriterion.id) {
+        else if (criterion.method !== 'automated') {
           try {
             if (
-              (await normsReviewResult(root, bytes.toString('utf8'), task.plan, current)) !==
-              entry.result
+              (await manualEvidenceResult(
+                root,
+                bytes.toString('utf8'),
+                task.plan,
+                current,
+                criterion.id,
+              )) !== entry.result
             )
               result = 'invalid';
           } catch {
@@ -297,4 +311,9 @@ export function addEvidence(task: Task, entry: Evidence) {
   task.reviewDecision = 'PENDING';
   task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
   task.stage = 'C1_EVIDENCE_PENDING';
+  task.plan.nextAction =
+    `Review ${entry.criterion} (${entry.result}), current originals and remaining gaps; ` +
+    (task.plan.result
+      ? 'when sufficient, prepare the candidate for actual acceptance.'
+      : 'when sufficient, return the maintenance result and archive as appropriate.');
 }

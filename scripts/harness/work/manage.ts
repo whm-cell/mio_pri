@@ -1,13 +1,24 @@
 import { isDeepStrictEqual } from 'node:util';
 import { assess, capture, contractIssues } from './context.ts';
 import { taskSummary } from './guide.ts';
-import { digest, draft, initializeMember, json, loadTask, parseTask, saveTask } from './records.ts';
+import {
+  deliveryPending,
+  digest,
+  draft,
+  initializeMember,
+  json,
+  loadTask,
+  parseTask,
+  saveTask,
+} from './records.ts';
 import type { Task, TaskPlan } from './records.ts';
 import { loadConfig } from '../inventory.ts';
 import { registerQualityReview } from './quality-review.ts';
 import { documentCatalog, resolveDocument, resolvePrd } from '../task-documents.ts';
 import { registerNormsReview } from './norms-review.ts';
 import { withTaskCommand } from './command.ts';
+import { requirementIssues } from './requirements.ts';
+import { clearConflict, readConflict } from './reconciliation.ts';
 
 const planFields = [
   'result',
@@ -107,6 +118,8 @@ export async function ensureTask(root: string, raw: string) {
     registerQualityReview(task.plan, await loadConfig(root));
     registerNormsReview(task.plan);
     task.checkpoint = await capture(root, task);
+    const sourceIssues = await requirementIssues(root, task.plan);
+    if (sourceIssues.length) throw new Error(sourceIssues.join('\n'));
     if (!contractIssues(task).length) task.stage = 'C0_READY';
     await saveTask(root, task);
     return { created: true, ...(await inspectTask(root, task, json(task))) };
@@ -123,7 +136,10 @@ export async function updateTask(root: string, id: string, raw: string) {
     !request.reason.trim()
   )
     throw new Error('WORK_REQUEST: revision and a reconciliation reason are required');
-  const patch = fields(request.plan === undefined ? {} : request.plan, planFields);
+  const patch = fields(request.plan === undefined ? {} : request.plan, [
+    ...planFields,
+    'requirement',
+  ]);
   if (patch.norms && typeof patch.norms === 'object' && !Array.isArray(patch.norms))
     patch.norms = { version: 2, ...patch.norms };
   if (patch.result && typeof patch.result === 'object') {
@@ -133,8 +149,24 @@ export async function updateTask(root: string, id: string, raw: string) {
     }
   }
   const task = loaded.task;
+  if (await deliveryPending(root, id))
+    throw new Error('WORK_DELIVERY_PENDING: resume the original delivery request first');
   if (request.revision !== digest(loaded.raw))
     throw new Error('WORK_CONFLICT: read the current context before updating');
+  const conflict = await readConflict(root, id);
+  if (
+    (request.reopen || (request.stage !== undefined && request.stage !== task.stage)) &&
+    (typeof patch.nextAction !== 'string' || !patch.nextAction.trim())
+  )
+    throw new Error(
+      'WORK_NEXT_ACTION: stage changes and reopening require the current plan.nextAction',
+    );
+  if (patch.requirement !== undefined) {
+    const location = fields(patch.requirement, ['section']);
+    if (!task.plan.requirement || typeof location.section !== 'string' || !location.section.trim())
+      throw new Error('WORK_REQUEST: only an existing requirement.section can be corrected');
+    patch.requirement = { ...task.plan.requirement, section: location.section };
+  }
   if (request.reopen !== undefined && request.reopen !== true)
     throw new Error('WORK_REQUEST: reopen must be explicitly true');
   if (task.archived && !request.reopen)
@@ -156,6 +188,10 @@ export async function updateTask(root: string, id: string, raw: string) {
   registerQualityReview(task.plan, await loadConfig(root));
   registerNormsReview(task.plan);
   const current = await capture(root, task);
+  if (patch.requirement !== undefined) {
+    const sourceIssues = await requirementIssues(root, task.plan);
+    if (sourceIssues.length) throw new Error(sourceIssues.join('\n'));
+  }
   if (
     current.candidate !== task.checkpoint?.candidate ||
     contractIssues(task).length ||
@@ -164,19 +200,27 @@ export async function updateTask(root: string, id: string, raw: string) {
   ) {
     task.reviewDecision = 'PENDING';
     task.releaseDisposition = 'HOLD_FOR_EVIDENCE';
-    if (task.stage === 'C1_RELEASED') task.stage = 'C1_EVIDENCE_PENDING';
+    if (task.stage === 'C1_RELEASED') {
+      task.stage = 'C1_EVIDENCE_PENDING';
+      if (patch.nextAction === undefined)
+        task.plan.nextAction =
+          'Reconcile the changed contract and files before sync; collect current evidence before returning this result.';
+    }
   }
   if (request.stage !== undefined) {
     if (!['C1_IMPLEMENTATION', 'C1_EVIDENCE_PENDING'].includes(request.stage as string))
       throw new Error('WORK_REQUEST: update cannot record release or human acceptance');
     if (request.stage === 'C1_IMPLEMENTATION') {
-      const assessment = await assess(root, task);
+      const assessment = await assess(root, task, { reconciling: true });
       if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
     }
     task.stage = request.stage as string;
   }
-  task.notes.push(`${new Date().toISOString()} ${request.reason}`);
+  task.notes.push(
+    `${new Date().toISOString()} ${request.reason}${conflict === null ? '' : `; resolved conflict: ${conflict.trim()}`}`,
+  );
   // Contract edits invalidate the old checkpoint; only an explicit sync acknowledges the diff.
   await saveTask(root, task, loaded.raw);
+  if (conflict !== null) await clearConflict(root, id);
   return inspectTask(root, task, json(task));
 }

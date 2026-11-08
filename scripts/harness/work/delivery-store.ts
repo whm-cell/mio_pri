@@ -5,6 +5,7 @@ import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
 import { evidenceRoot, indexPath, optionalText, reportPath, resultPath } from './reports.ts';
+import { recordsPath } from './compact-store.ts';
 
 interface Change {
   path: string;
@@ -46,6 +47,7 @@ export async function loadOperation(root: string, id: string) {
     (task.delivery?.version === 2 &&
       target &&
       (path === reportPath(target.prd) ||
+        path === recordsPath(target.prd) ||
         path === resultPath(target) ||
         path.startsWith(`${evidenceRoot(target)}/`))) ||
     (task.delivery?.version === 1 &&

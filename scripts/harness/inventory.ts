@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { recordsFile } from './work/compact-store.ts';
 
 export interface HarnessConfig {
   sourceRoots: Record<string, 'production' | 'test' | 'development'>;
@@ -50,7 +51,7 @@ export async function inventory(root: string, config: HarnessConfig) {
       config.configurationFiles.includes(file) || /^\.github\/workflows\/[^/]+\.ya?ml$/.test(file);
     if (sourceRoot && !file.endsWith('.ts')) {
       errors.push(`SOURCE_UNSUPPORTED ${file}: source roots currently support TypeScript only`);
-    } else if (document && !file.endsWith('.md')) {
+    } else if (document && !file.endsWith('.md') && !recordsFile(file)) {
       errors.push(`DOCUMENT_UNCLASSIFIED ${file}: declare the asset's purpose`);
     } else if (!sourceRoot && !document && !configuration) {
       errors.push(`FILE_UNCLASSIFIED ${file}: declare its source/configuration/document role`);

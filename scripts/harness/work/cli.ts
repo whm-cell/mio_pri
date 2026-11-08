@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   addEvidence,
@@ -12,7 +12,7 @@ import {
   inputStamp,
 } from './context.ts';
 import { handoff, receive } from './handoff.ts';
-import { guide, taskSummary } from './guide.ts';
+import { guide } from './guide.ts';
 import { ensureTask, inspectTask, updateTask } from './manage.ts';
 import { deliver } from './delivery.ts';
 import { qualityCriterion, qualityReviewResult } from './quality-review.ts';
@@ -20,6 +20,11 @@ import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.t
 import { inventory, loadConfig } from '../inventory.ts';
 import { inspectTaskDocuments } from '../task-documents.ts';
 import { checkDocuments } from '../check-documents.ts';
+import { finiteOutput, readPage } from './output.ts';
+import { readOptions } from './read-options.ts';
+import { readStatus } from './read-status.ts';
+import { assessmentOutput, inspectionOutput, readTask } from './read-task.ts';
+import { readPublicResult } from './public-read.ts';
 import {
   checkedPath,
   digest,
@@ -40,10 +45,14 @@ Agent operates this CLI; the user supplies goals and decisions.
   deliver <task> --stdin                prepare privately or record an accepted PRD result
   init <member>                         initialize this member's workspace
   start <task> <goal> [source.md ...]    legacy draft; complete via update before sync
-  status                                list local tasks
-  documents                             list task identities, current paths, aliases and validation issues
-  guide <action>                        read common rules and one action, without local records
+  status [--query text] [--stage stage] [--archived active|archived|all]
+                                        page records; current assessment is not checked
+  documents [read options]               page task identities and validation issues
+  guide <action> [--section ref]         navigate one action; expand one stable section ref
   context <task> <action>               read current task summary, checks and one action
+  read <task> <task|check> [pointer]     page selected record fields or current checks
+  read <task> evidence <index>          page one ledger-bound original (UTF-8 text)
+  read-result <prd> [key] [read options] page a public result without personal records
   check <task>                          read-only context/evidence assessment
   sync <task> <reason>                  acknowledge inspected changes; retain evidence
   run <task> <criterion> -- <argv ...>  capture an automated check without a shell
@@ -53,6 +62,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   receive <shared.md> [result-key]      verify a result/handoff, create this member's draft
   archive <task> <reason>               mark history; retain all files
 Actions: start, resume, implement, verify, deliver, handoff, archive
+Read options: --select /JSON/pointer --offset N --limit N --hash SHA256
 Agent entry: guide start, then ensure --stdin; expand only the current action.`;
 
 async function input() {
@@ -67,26 +77,36 @@ async function main() {
   // Commands are a repository development tool, never a product-runtime dependency.
   await readFile(await checkedPath(root, 'harness.config.json'));
   if (command === 'guide') {
-    if (args.length !== 1) throw new Error(help);
-    return console.log(json(await guide(root, args[0]!)));
+    const { positionals, options, flags } = readOptions(args, ['section']);
+    if (positionals.length !== 1) throw new Error(help);
+    return console.log(json(await guide(root, positionals[0]!, options, flags.section)));
   }
   if (command === 'documents') {
-    if (args.length) throw new Error(help);
+    const { positionals, options } = readOptions(args);
+    if (positionals.length) throw new Error(help);
     const config = await loadConfig(root);
     const scan = await inventory(root, config);
     const registry = await inspectTaskDocuments(root, config);
     const checked = await checkDocuments(root, scan.files, config);
     const issues = [...new Set([...scan.errors, ...registry.errors, ...checked.errors])];
+    const source = {
+      documents: registry.documents.map((entry) => ({
+        kind: entry.kind,
+        identity: entry.identity,
+        currentPath: entry.path,
+        aliases: entry.aliases ?? [],
+      })),
+      issues,
+    };
     console.log(
-      json({
-        documents: registry.documents.map((entry) => ({
-          kind: entry.kind,
-          identity: entry.identity,
-          currentPath: entry.path,
-          aliases: entry.aliases ?? [],
-        })),
-        issues,
-      }),
+      json(
+        options.select || options.offset || options.limit !== undefined || options.hash
+          ? readPage(source, options, ['documents'])
+          : finiteOutput(source, (pointer) => ({
+              argv: ['documents', '--select', pointer],
+              sha256: digest(json(source)),
+            })),
+      ),
     );
     if (issues.length) process.exitCode = 1;
     return;
@@ -98,44 +118,43 @@ async function main() {
   }
   if (command === 'ensure') {
     if (args.length !== 1 || args[0] !== '--stdin') throw new Error(help);
-    return console.log(json(await ensureTask(root, await input())));
+    return console.log(json(inspectionOutput(await ensureTask(root, await input()))));
   }
   if (command === 'update') {
     if (args.length !== 2 || args[1] !== '--stdin') throw new Error(help);
-    return console.log(json(await updateTask(root, args[0]!, await input())));
+    return console.log(json(inspectionOutput(await updateTask(root, args[0]!, await input()))));
   }
   if (command === 'deliver') {
     if (args.length !== 2 || args[1] !== '--stdin') throw new Error(help);
-    return console.log(json(await deliver(root, args[0]!, await input())));
+    const result = await deliver(root, args[0]!, await input());
+    const { raw } = await loadTask(root, args[0]!);
+    return console.log(
+      json(
+        finiteOutput(result, () => ({
+          argv: ['read', args[0]!, 'task', '--select', '/delivery'],
+          sha256: digest(raw),
+        })),
+      ),
+    );
   }
   if (command === 'status') {
-    if (args.length) throw new Error(help);
-    const directory = await checkedPath(root, '.work/tasks');
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      return console.log(json({ tasks: [] }));
-    }
-    const tasks = [];
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-      const { task } = await loadTask(root, entry.name);
-      const { assessment } = await inspectTask(root, task, json(task));
-      tasks.push({
-        id: task.plan.id,
-        goal: task.plan.goal,
-        requirement: task.plan.requirement,
-        ...(task.plan.result ? { result: task.plan.result } : {}),
-        stage: task.stage,
-        archived: task.archived,
-        nextAction: task.plan.nextAction,
-        assessment,
-      });
-    }
-    return console.log(json({ tasks }));
+    const { positionals, options, flags } = readOptions(args, ['query', 'stage', 'archived']);
+    if (positionals.length) throw new Error(help);
+    return console.log(json(await readStatus(root, options, flags)));
   }
+  if (command === 'read') {
+    const { positionals, options } = readOptions(args);
+    if (positionals.length < 2 || positionals.length > 3) throw new Error(help);
+    const [id, kind, selected] = positionals;
+    if (kind !== 'evidence' && selected !== undefined) {
+      if (options.select) throw new Error('WORK_READ_SELECT: supply the pointer once');
+      options.select = selected;
+    }
+    return console.log(
+      json(await readTask(root, id!, kind!, options, kind === 'evidence' ? selected : undefined)),
+    );
+  }
+  if (command === 'read-result') return console.log(json(await readPublicResult(root, args)));
   const actor = await member(root);
   if (command === 'start') {
     if (args.length < 2) throw new Error(help);
@@ -157,13 +176,13 @@ async function main() {
   if (command === 'context') {
     if (args.length !== 2) throw new Error(help);
     const reading = await guide(root, args[1]!);
-    const inspected = await inspectTask(root, task, raw);
-    return console.log(json({ ...inspected, task: taskSummary(task, args[1]!), ...reading }));
+    const inspected = await inspectTask(root, task, raw, args[1]!);
+    return console.log(json({ ...inspectionOutput(inspected), ...reading }));
   }
   if (command === 'check') {
     if (args.length !== 1) throw new Error(help);
     const result = await assess(root, task);
-    console.log(json(result));
+    console.log(json(assessmentOutput(task, result, digest(raw))));
     if (!result.ready) process.exitCode = 1;
     return;
   }
@@ -178,7 +197,11 @@ async function main() {
     if (task.stage !== 'C1_IMPLEMENTATION')
       throw new Error('WORK_EXEC_STAGE: enter C1_IMPLEMENTATION before implementation commands');
     const assessment = await assess(root, task);
-    if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
+    if (!assessment.ready) {
+      console.error(json(assessmentOutput(task, assessment, digest(raw))));
+      process.exitCode = 1;
+      return;
+    }
     const outcome = spawnSync(args[2]!, args.slice(3), { cwd: root, stdio: 'inherit' });
     if (outcome.error) throw outcome.error;
     process.exitCode = outcome.status ?? 1;
@@ -202,7 +225,7 @@ async function main() {
     if (task.stage === null && !contractIssues(task).length) task.stage = 'C0_READY';
     await saveTask(root, task, raw);
     const result = await assess(root, task);
-    console.log(json(result));
+    console.log(json(assessmentOutput(task, result, digest(json(task)))));
     if (!result.ready) process.exitCode = 1;
     return;
   }
@@ -221,7 +244,11 @@ async function main() {
     task.reviewDecision = 'PENDING';
   }
   const state = await assess(root, task);
-  if (!state.ready) throw new Error(state.errors.join('\n'));
+  if (!state.ready) {
+    console.error(json(assessmentOutput(task, state, digest(raw))));
+    process.exitCode = 1;
+    return;
+  }
   const criterion = task.plan.acceptance.find((entry) => entry.id === args[1]);
   if (!criterion) throw new Error('WORK_CRITERION: use an acceptance id from this task');
   if (command === 'evidence') {
@@ -316,6 +343,17 @@ async function main() {
 try {
   await main();
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  const message = error instanceof Error ? error.message : String(error);
+  if (Buffer.byteLength(message) <= 4096) console.error(message);
+  else
+    console.error(
+      json({
+        error: [...message].slice(0, 512).join(''),
+        incomplete: true,
+        sha256: digest(message),
+        bytes: Buffer.byteLength(message),
+        detail: 'The full exception text was not persisted. Inspect the original request/input.',
+      }),
+    );
   process.exitCode = 1;
 }

@@ -36,7 +36,7 @@ function fields(value: unknown, allowed: string[]): Record<string, unknown> {
 }
 
 /** No history, raw evidence or unrelated operation guides enter the response. */
-export async function inspectTask(root: string, task: Task, raw: string) {
+export async function inspectTask(root: string, task: Task, raw: string, action = 'resume') {
   let assessment;
   try {
     assessment = await assess(root, task);
@@ -46,7 +46,7 @@ export async function inspectTask(root: string, task: Task, raw: string) {
       errors: [error instanceof Error ? error.message : String(error)],
     };
   }
-  return { revision: digest(raw), task: taskSummary(task, 'resume'), assessment };
+  return { revision: digest(raw), task: taskSummary(task, action), assessment };
 }
 
 /** Stable requirement identity locates the record; a retry never replaces existing progress. */

@@ -295,9 +295,19 @@ it('rechecks review contents at delivery instead of trusting a forged pass label
   await writeFile(f.path, JSON.stringify(task));
   expect(f.context().assessment.qualityReview.result).toBe('invalid');
   const output = cli(f.root, ['context', f.id, 'verify']).output;
-  expect(output).toContain('algorithm');
-  expect(output).toContain('unused');
-  expect(output).toContain('reuse');
+  const navigation = JSON.parse(output).reading.find((entry: { ref: string }) =>
+    entry.ref.endsWith('#验证与接受'),
+  );
+  const section = JSON.parse(cli(f.root, [...navigation.read.argv, '--limit', '20']).output);
+  const review = section.items.find(
+    (block: { type: string; body: unknown }) =>
+      block.type === 'list' && JSON.stringify(block.body).includes('algorithm'),
+  );
+  const details =
+    typeof review.body === 'string' ? review.body : cli(f.root, review.body.$read.argv).output;
+  expect(details).toContain('algorithm');
+  expect(details).toContain('unused');
+  expect(details).toContain('reuse');
   expect(output).not.toContain('## 交付命令');
 });
 

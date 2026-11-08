@@ -34,7 +34,7 @@ Foundation 子域的导入方向是插件入口 → 基础 HTTP，基础 HTTP �
 | ACCESS-01   | 云端服务能力限制；接口/插件配置变化         | 最小 API 身份校验；无工具权限；实际执行链验证拒绝                                                                | `pnpm test`、`pnpm test:smoke`                                     |
 | LIFE-01     | 独立服务部署；加载/关闭变化                 | 正式 Profile 装载产物；就绪需插件成功；关闭释放端口与路由                                                        | `pnpm test`、`pnpm test:smoke`                                     |
 | DOC-01      | 公共资料可独立接手；文档/索引变化           | 公共本地链接有效；不依赖个人目录；禁止跟踪凭证/运行数据                                                          | `pnpm guard`                                                       |
-| WORK-01     | 团队明确采用每人独立工作记录；任务/交接变化 | 仓库内协议驱动本地任务、上下文核对、证据与交接；公共 CI 不读取私人记录                                           | `pnpm work check <task>`、`pnpm test`                              |
+| WORK-01     | 团队明确采用每人独立工作记录；任务/交接变化 | 本地任务按目标分页与分层读取，执行仍核对完整输入；公共成果按 PRD 收敛且可无作者记录读取，公共 CI 不读取私人记录  | `pnpm work check <task>`、`pnpm test`                              |
 | SHAPE-01    | 维护成本；TS 源码变化                       | 报告文件/函数长度、嵌套与分支复杂度信号，人工按职责判断；无通用行数硬上限                                        | `pnpm guard` 输出与代码审阅                                        |
 | QUALITY-01  | 已确认算法与公共函数审查需求；源码任务      | verify 执行算法成本、未使用公共函数/方法与未复用实现审查；交付核对必需项、当前候选原件与结论，不自动判定算法优劣 | `pnpm work context <task> verify`、`work evidence`、`work deliver` |
 | NORMS-01    | 交回前三方关系；开发成果及适用维护          | plan.norms v2 复用 norms-review 对账需求／方案、规范和旧接受；绑定实际候选与剩余决定，维护不造 result            | `work evidence`、`work deliver`                                    |

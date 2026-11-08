@@ -4,7 +4,8 @@ import { dirname } from 'node:path';
 import { beneath, inventory, loadConfig } from '../inventory.ts';
 import { checkedPath, deliveryPending, digest, json } from './records.ts';
 import type { Checkpoint, Evidence, Task } from './records.ts';
-import { deliveryOutput, readDraft } from './reports.ts';
+import { compactInputs, deliveryOutput, readDraft, readResultInput } from './reports.ts';
+import { hasResultSelector, parseSelector, recordsFile } from './compact-store.ts';
 import { needsQualityReview, qualityCriterion, qualityReviewResult } from './quality-review.ts';
 import { documentCatalog, resolveDocument } from '../task-documents.ts';
 import { normsCriterion, normsIssues, normsReviewResult } from './norms-review.ts';
@@ -32,6 +33,16 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     ['scope', task.plan.scope],
   ] as const) {
     for (const path of paths) {
+      if (hasResultSelector(path)) {
+        const selector = parseSelector(path);
+        await checkedPath(root, selector.path);
+        if (kind !== 'input') throw new Error('WORK_REPORT_SELECTOR: use selectors only in inputs');
+        if (deliveryOutput(task, path))
+          throw new Error('WORK_DELIVERY_INPUT: own result cannot be an input');
+        await readResultInput(root, path);
+        selected.add(path);
+        continue;
+      }
       if (path !== '.') await checkedPath(root, path);
       if (
         [...config.privateRoots, ...config.generatedRoots].some((base) => beneath(path, base)) ||
@@ -57,8 +68,14 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     }
   }
   const files: Record<string, string> = {};
-  for (const file of [...selected].sort())
-    files[file] = digest(await readFile(await checkedPath(root, file)));
+  for (const file of [...selected].sort()) {
+    if (recordsFile(file)) Object.assign(files, await compactInputs(root, file, task));
+    else if (hasResultSelector(file)) {
+      const content = await readResultInput(root, file);
+      if (content === null) throw new Error(`WORK_INPUT_MISSING: ${file}`);
+      files[file] = digest(content);
+    } else files[file] = digest(await readFile(await checkedPath(root, file)));
+  }
   const plan = task.plan;
   const contractPlan = {
     id: plan.id,
@@ -93,8 +110,11 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
 
 /** A restore can hide a write from byte snapshots. Observe file identity/change times and source directories too. */
 export async function inputStamp(root: string, checkpoint: Checkpoint): Promise<string> {
-  const paths = new Set(Object.keys(checkpoint.files));
-  for (const file of Object.keys(checkpoint.files)) {
+  const physical = Object.keys(checkpoint.files).map((file) =>
+    hasResultSelector(file) ? parseSelector(file).path : file,
+  );
+  const paths = new Set(physical);
+  for (const file of physical) {
     for (let parent = dirname(file); parent !== '.'; parent = dirname(parent)) paths.add(parent);
   }
   const stamps: Record<string, string> = {};

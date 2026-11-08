@@ -8,6 +8,7 @@ import { normsIssues } from './norms-review.ts';
 import { documentCatalog, requirementsPath, resolvePrd } from '../task-documents.ts';
 import {
   evidenceRoot,
+  compactRecords,
   hashField,
   indexPath,
   loadBook,
@@ -18,6 +19,7 @@ import {
   readIndex,
   record,
   renderBook,
+  renderCompactBook,
   renderDraft,
   renderIndex,
   renderResultPage,
@@ -27,6 +29,7 @@ import {
   textField,
 } from './reports.ts';
 import type { PublicResult, SharedEvidence } from './reports.ts';
+import { evidenceSelector, recordsPath } from './compact-store.ts';
 
 export const markdown = (text: string) => format(text, { parser: 'markdown', printWidth: 100 });
 function publicText(text: string) {
@@ -134,6 +137,7 @@ async function prepare(
   const directory = `.work/tasks/${task.plan.id}/delivery`;
   const outputs: Record<string, string> = {};
   const shared: SharedEvidence[] = [];
+  const { book } = await readBook(root, task.plan.result!.prd, (await readIndex(root)).index);
   for (const value of request.evidence) {
     const selected = record(value);
     fields(selected, ['criterion', 'representation', 'text']);
@@ -170,7 +174,10 @@ async function prepare(
       method: original.method,
       representation: representation as SharedEvidence['representation'],
       sourceSha256: original.sha256,
-      path: `${evidenceRoot(task.plan.result!)}/${criterion}.md`,
+      path:
+        book.version === 4
+          ? evidenceSelector(task.plan.result!.prd, task.plan.result!.key, criterion)
+          : `${evidenceRoot(task.plan.result!)}/${criterion}.md`,
       sha256: digest(content),
       environment: original.environment,
     });
@@ -227,14 +234,16 @@ async function preservePrevious(root: string, prd: string, previous: PublicResul
     throw new Error(
       `WORK_DELIVERY_HISTORY: commit the previous accepted result before replacing ${previous.key}`,
     );
-  for (const evidence of previous.evidence) {
-    const bytes = spawnSync('git', ['show', `HEAD:${evidence.path}`], {
+  await resultFiles(root, previous, async (path) => {
+    const bytes = spawnSync('git', ['show', `HEAD:${path}`], {
       cwd: root,
+      encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     });
-    if (bytes.status !== 0 || digest(bytes.stdout) !== evidence.sha256)
-      throw new Error(`WORK_DELIVERY_HISTORY: preserve previous evidence ${evidence.path}`);
-  }
+    if (bytes.status !== 0)
+      throw new Error(`WORK_DELIVERY_HISTORY: preserve previous evidence ${path}`);
+    return bytes.stdout;
+  });
 }
 
 async function complete(
@@ -260,6 +269,8 @@ async function complete(
   };
   const { index, source: indexBefore } = await readIndex(root);
   const { book, source: bookBefore, details } = await readBook(root, draft.prd, index);
+  if (draft.result.evidence.some((entry) => entry.path.includes('#') !== (book.version === 4)))
+    throw new Error('WORK_DELIVERY_STALE: book format changed after preparation');
   if (book.version === 2 && book.results.some((entry) => entry.key !== draft.result.key))
     throw new Error(
       'WORK_DELIVERY_LEGACY: migrate the v2 navigation before publishing alongside sibling results',
@@ -268,9 +279,10 @@ async function complete(
   const previousFiles = previous ? await resultFiles(root, previous) : {};
   if (previous && json(previous) !== json(draft.result))
     await preservePrevious(root, draft.prd, previous);
-  const outputs: Record<string, string | null> = { ...attachments };
+  const outputs: Record<string, string | null> = book.version === 4 ? {} : { ...attachments };
   const expected: Record<string, string | null> = {};
-  for (const path of Object.keys(attachments)) expected[path] = previousFiles[path] ?? null;
+  if (book.version !== 4)
+    for (const path of Object.keys(attachments)) expected[path] = previousFiles[path] ?? null;
   for (const [path, content] of Object.entries(previousFiles)) {
     if (!(path in outputs) && path.startsWith(`${evidenceRoot(task.plan.result!)}/`)) {
       outputs[path] = null;
@@ -281,12 +293,23 @@ async function complete(
     .filter((entry) => entry.key !== draft.result.key)
     .concat(draft.result);
   book.results.sort((a, b) => a.key.localeCompare(b.key));
-  const detail = resultPath(task.plan.result!);
-  outputs[detail] = publicText(await markdown(renderResultPage(draft.prd, draft.result)));
-  expected[detail] = details[detail] ?? null;
-  details[detail] = outputs[detail]!;
   const path = reportPath(draft.prd);
-  const source = publicText(await markdown(renderBook(book, details)));
+  let source: string;
+  if (book.version === 4) {
+    const records = compactRecords(book, attachments, details[recordsPath(draft.prd)]);
+    const bytes = publicText(await format(json(records), { parser: 'json', printWidth: 100 }));
+    const storePath = recordsPath(draft.prd);
+    outputs[storePath] = bytes;
+    expected[storePath] = details[storePath] ?? null;
+    details[storePath] = bytes;
+    source = publicText(await markdown(renderCompactBook(records, bytes)));
+  } else {
+    const detail = resultPath(task.plan.result!);
+    outputs[detail] = publicText(await markdown(renderResultPage(draft.prd, draft.result)));
+    expected[detail] = details[detail] ?? null;
+    details[detail] = outputs[detail]!;
+    source = publicText(await markdown(renderBook(book, details)));
+  }
   await loadBook(source, async (file) => details[file] ?? null);
   outputs[path] = source;
   expected[path] = bookBefore;

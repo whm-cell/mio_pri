@@ -57,7 +57,7 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 源码任务自动登记 `quality-review`，Agent 在 verify 阶段实际审阅算法成本、未使用公共函数/方法和未复用的已有实现，再记录当前候选原件。交付缺少匹配审查不能通过；普通检查不会自行调用模型。判据与执行边界见 [验证协议](docs/coordination.md#验证与接受)。
 
-任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`，通过 `pnpm work status` 查看当前核对结果。命令型实施使用 `pnpm work exec <task> -- <argv ...>`，在子进程启动前检查 C1 条件；直接编辑仍由 Agent 遵守前置核对。明确的开发能力用 `plan.result={prd,key}` 关联 PRD 和稳定成果键；证据齐全后的 `deliver prepare` 只保存私有草稿，真实接受后 `complete` 更新[同一 PRD 的成果入口](docs/tasks/index.md)。维护、演练和流程收尾检查后按需 archive，个人过程不生成公共 complete。历史护栏依据单独保留，已登记成果不等于整份 PRD 完成。
+任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`。`pnpm work status` 分页定位任务，记录阶段不表示现场已核验；选中后用 `context`／`check` 核对，按返回入口展开必要字段和证据。命令型实施使用 `work exec` 检查 C1 条件，直接编辑仍遵守同一前置要求。开发能力以 `plan.result={prd,key}` 关联成果，证据齐全后 prepare 私有草稿，真实接受后 complete；维护验证后按需 archive。渐进读取和交付格式见[记录命令](docs/work-records.md)，成果从[同一 PRD 入口](docs/tasks/index.md)查找。
 
 公共资料统一在 `docs/`，需求、设计与候选维护在 `docs/tasks/`，其他现行规范按领域维护。`pnpm work documents` 列出注册类别、稳定身份、当前位置、兼容别名及发现问题，不改写资料。开发成果交付前按[规范核对](docs/coordination.md#验证与接受)声明 `plan.norms`，在 verify 前更新必要规范并审阅当前候选；complete 不自动从任务方案生成规范。
 

@@ -250,7 +250,7 @@ it('bootstraps one complete member record when independent subtasks start concur
 it('automatically creates a PRD subtask and resumes it after interruption without replacing progress or evidence', async () => {
   const root = await fixture();
   await rm(join(root, '.work'), { recursive: true });
-  expect(JSON.parse(invoke(root, ['status']).output)).toEqual({ tasks: [] });
+  expect(JSON.parse(invoke(root, ['status']).output).tasks).toEqual([]);
   await expect(readdir(join(root, '.work'))).rejects.toHaveProperty('code', 'ENOENT');
   const first = invoke(root, ['ensure', '--stdin'], proposal());
   expect(first.status, first.output).toBe(0);
@@ -464,7 +464,10 @@ it('does not interpret example headings as guide sections and rejects absent or 
   );
   const result = invoke(root, ['guide', 'start']);
   expect(result.status).toBe(0);
-  expect(result.output).toContain('example heading');
+  expect(result.output).not.toContain('example heading');
+  const expanded = invoke(root, ['guide', 'start', '--section', 'docs/coordination.md#开始任务']);
+  expect(expanded.status, expanded.output).toBe(0);
+  expect(expanded.output).toContain('example heading');
   expect(result.output).not.toContain('foreign-mode-marker');
   await writeFile(path, '# Missing route\n');
   expect(invoke(root, ['guide', 'start']).output).toContain('WORK_GUIDE_SECTION');
@@ -525,9 +528,47 @@ it.each(['verify', 'deliver', 'handoff', 'archive'])(
     ]) {
       const result = invoke(root, args);
       expect(result.status, result.output).toBe(0);
-      const body = JSON.parse(result.output)
-        .reading.map((entry: { body: string }) => entry.body)
-        .join('\n');
+      const reading = JSON.parse(result.output).reading as { ref: string }[];
+      const ref = 'docs/coordination.md#交回与下一步';
+      // Deliver reaches handback through its task-delivery section; other actions link it directly.
+      const selected = reading.some((entry) => entry.ref === ref)
+        ? ref
+        : 'docs/coordination.md#任务交付与重开';
+      const expanded = invoke(root, [
+        'guide',
+        action,
+        '--section',
+        selected,
+        '--select',
+        '/blocks',
+        '--limit',
+        '20',
+      ]);
+      expect(expanded.status, expanded.output).toBe(0);
+      const page = JSON.parse(expanded.output);
+      let body = '';
+      for (let index = 0; index < page.page.total; index++) {
+        let offset = 0;
+        do {
+          const part = invoke(root, [
+            'guide',
+            action,
+            '--section',
+            selected,
+            '--select',
+            `/blocks/${index}/body`,
+            '--offset',
+            String(offset),
+            '--limit',
+            '2048',
+          ]);
+          expect(part.status, part.output).toBe(0);
+          const text = JSON.parse(part.output);
+          body += `${text.text}\n`;
+          offset += text.page.count;
+          if (!text.page.next) break;
+        } while (true);
+      }
       expect(body).toContain('需求与方案');
       expect(body).toContain('现行规范');
       expect(body).toContain('已接受成果');

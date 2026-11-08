@@ -3,8 +3,15 @@ import { dirname } from 'node:path';
 import { capture, contractIssues } from './context.ts';
 import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
-import { deliveryOutput, loadBook, reportPath, resultFiles } from './reports.ts';
-import { historicalPath, optionalText, parseReport } from './legacy-reports.ts';
+import {
+  deliveryOutput,
+  readBook,
+  readIndex,
+  readResultInput,
+  reportPath,
+  resultFiles,
+} from './reports.ts';
+import { historicalPath, parseReport } from './legacy-reports.ts';
 import { draft } from './records.ts';
 import { documentCatalog, resolveDocument } from '../task-documents.ts';
 
@@ -87,7 +94,10 @@ export async function receive(root: string, source: string, key?: string) {
   if (!source.startsWith('.work/inbox/')) resolveDocument(source, catalog);
   const markdown = await readFile(await checkedPath(root, source), 'utf8');
   if (source.startsWith('docs/tasks/complete/') && source.endsWith('/report.md')) {
-    const { book } = await loadBook(markdown, (path) => optionalText(root, path));
+    const { index } = await readIndex(root);
+    const entry = index.prds.find((entry) => entry.report.path === source);
+    if (!entry) throw new Error('WORK_REPORT_BINDING: report is absent from the public index');
+    const { book } = await readBook(root, entry.prd, index);
     if (source !== reportPath(book.prd))
       throw new Error('WORK_REPORT_FORMAT: PRD/book location mismatch');
     if (resolveDocument(book.prd, catalog).identity !== book.prd)
@@ -120,7 +130,7 @@ export async function receive(root: string, source: string, key?: string) {
     };
     const changed: string[] = [];
     for (const [path, expected] of Object.entries(result.version.files)) {
-      const current = await optionalText(root, path);
+      const current = await readResultInput(root, path);
       if (current === null || digest(current) !== expected) changed.push(path);
     }
     task.notes.push(

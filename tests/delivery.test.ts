@@ -1,12 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
+import { format } from 'prettier';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
-import { assess, capture } from '../scripts/harness/work/context.ts';
+import { assess, capture, inputStamp } from '../scripts/harness/work/context.ts';
+import { recordsPath, resultSelector } from '../scripts/harness/work/compact-store.ts';
 import { deliver, markdown } from '../scripts/harness/work/delivery.ts';
 import {
   commitDelivery,
@@ -25,6 +27,9 @@ import {
   parseIndex,
   readBook,
   readIndex,
+  readResultInput,
+  resultFiles,
+  renderCompactBook,
   resultPath,
   renderResultPage,
   renderDraft,
@@ -33,6 +38,7 @@ import {
   reportPath,
 } from '../scripts/harness/work/reports.ts';
 import type { PublicResult } from '../scripts/harness/work/reports.ts';
+import type { CompactRecords } from '../scripts/harness/work/compact-store.ts';
 import {
   historicalPath,
   legacyFiles,
@@ -56,12 +62,15 @@ import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 const project = resolve('.');
 const prd = 'docs/prd.md';
 const scratch: string[] = [];
+const legacyRoots = new Set<string>();
 afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  legacyRoots.clear();
 });
-async function fixture() {
+async function fixture(legacy = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'mio-delivery-')));
   scratch.push(root);
+  if (legacy) legacyRoots.add(root);
   for (const file of ['harness.config.json', 'docs/coordination.md', 'docs/work-records.md']) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await cp(join(project, file), join(root, file));
@@ -110,7 +119,26 @@ async function legacyBook(root: string) {
   for (const path of Object.keys(details)) await rm(join(root, path));
   return parseBook(source);
 }
-async function setup(root: string, id = 'probe', key: string | null = id, source = prd) {
+async function setup(
+  root: string,
+  id = 'probe',
+  key: string | null = id,
+  source = prd,
+  extras: string[] = [],
+) {
+  if (
+    key !== null &&
+    legacyRoots.has(root) &&
+    (await readBook(root, source, (await readIndex(root)).index)).source === null
+  ) {
+    const { index } = await readIndex(root);
+    const path = reportPath(source);
+    const content = await markdown(renderBook({ version: 3, prd: source, results: [] }, {}));
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+    index.prds.push({ prd: source, report: { path, sha256: digest(content) } });
+    await writeFile(join(root, indexPath), await markdown(renderIndex(index)));
+  }
   const task = draft(root, 'alice', id, 'Implement a capability');
   Object.assign(task.plan, {
     scope: ['src', 'docs'],
@@ -119,6 +147,7 @@ async function setup(root: string, id = 'probe', key: string | null = id, source
     acceptance: [
       { id: 'checks', criterion: 'Capability returns 1.', method: 'automated' },
       { id: 'quality-review', criterion: 'Review the fixture source.', method: 'review' },
+      ...extras.map((id) => ({ id, criterion: `Independent fixture ${id}.`, method: 'automated' })),
     ],
     nextAction: 'Verify',
     stopCondition: 'Return for acceptance',
@@ -158,6 +187,20 @@ async function passing(root: string, id = 'probe') {
     summary: 'Fixture observation',
     environment: 'isolated fixture',
   });
+  for (const criterion of task.plan.acceptance.filter(
+    (entry) => entry.method === 'automated' && entry.id !== 'checks',
+  )) {
+    const content = `Observed independent fixture criterion ${criterion.id}.\n`;
+    const extraArtifact = `.work/tasks/${id}/evidence/${criterion.id}-${task.evidence.length}.log`;
+    await writeFile(join(root, extraArtifact), content);
+    task.evidence.push({
+      ...task.evidence.at(-1)!,
+      criterion: criterion.id,
+      artifact: extraArtifact,
+      sha256: digest(content),
+      summary: `Independent fixture observation for ${criterion.id}`,
+    });
+  }
   const review = reviewMarkdown(reviewFixture(task.checkpoint.candidate));
   const path = `.work/tasks/${id}/evidence/review-${task.evidence.length}.md`;
   await writeFile(join(root, path), review);
@@ -419,9 +462,10 @@ it('prepares only private, usable evidence links and publishes a candidate-bound
     readyForAcceptance: true,
     releaseDisposition: 'HOLD_FOR_HUMAN_REVIEW',
   });
-  expect(JSON.parse(invoke(root, ['status']).stdout).tasks[0].assessment.readyForAcceptance).toBe(
-    true,
+  expect(JSON.parse(invoke(root, ['status']).stdout).tasks[0].assessment.status).toBe(
+    'not_checked',
   );
+  expect(JSON.parse(invoke(root, ['check', 'probe']).stdout).readyForAcceptance).toBe(true);
   expect(await deliver(root, 'probe', json(request))).toMatchObject({
     replayed: true,
     readyForAcceptance: true,
@@ -446,8 +490,13 @@ it('prepares only private, usable evidence links and publishes a candidate-bound
   expect((await capture(root, accepted)).candidate).toBe(candidate);
   for (const [path] of Object.entries(await publicFiles(root))) {
     const text = await readFile(join(root, path), 'utf8');
-    expect(await markdown(text)).toBe(text);
+    if (path.endsWith('.md')) expect(await markdown(text)).toBe(text);
+    else {
+      expect(JSON.parse(text).version).toBe(4);
+      expect(await format(text, { parser: 'json', printWidth: 100 })).toBe(text);
+    }
   }
+  expect((await results(root)).results).toEqual(book.results);
   const copy = await fixture();
   await cp(join(root, 'docs/tasks'), join(copy, 'docs/tasks'), { recursive: true });
   await rm(join(copy, '.work'), { recursive: true });
@@ -586,7 +635,7 @@ it('keeps maintenance local and archives its retained evidence without any publi
 });
 
 it('rejects replacement when HEAD contains the old result but not its required evidence', async () => {
-  const root = await fixture();
+  const root = await fixture(true);
   await setup(root);
   await finish(root);
   const old = (await results(root)).results[0]!;
@@ -611,7 +660,7 @@ it('rejects replacement when HEAD contains the old result but not its required e
 });
 
 it('rejects missing, changed and orphaned public bytes without consulting the author records', async () => {
-  const root = await fixture();
+  const root = await fixture(true);
   await setup(root);
   await finish(root);
   const evidence = (await results(root)).results[0]!.evidence[0]!.path;
@@ -695,14 +744,17 @@ it.each([0, 1, 2, 3, 4, 5])(
   },
 );
 
-it.each([0, 1, 2, 3, 4, 5, 6, 7])(
-  'recovers completion interrupted after %i writes without duplicate results',
-  async (cut) => {
-    const root = await fixture();
+it.each([
+  ...Array.from({ length: 8 }, (_, cut) => [true, cut] as const),
+  ...Array.from({ length: 5 }, (_, cut) => [false, cut] as const),
+])(
+  'recovers completion legacy=%s interrupted after %i writes without duplicate results',
+  async (legacy, cut) => {
+    const root = await fixture(legacy);
     await setup(root);
     const request = await finish(root);
     const { operation } = (await loadOperation(root, 'probe'))!;
-    expect(operation.changes).toHaveLength(7);
+    expect(operation.changes).toHaveLength(legacy ? 7 : 4);
     operation.done = false;
     for (let i = 0; i < operation.changes.length; i++) {
       const change = operation.changes[i]!;
@@ -837,7 +889,7 @@ it('receives a selected public result without the author records, authority, sco
 });
 
 it('keeps result classification in exact-code handoffs and binds sibling evidence as an input', async () => {
-  const sender = await fixture();
+  const sender = await fixture(true);
   await setup(sender);
   await finish(sender);
   const receiver = await fixture();
@@ -935,7 +987,7 @@ it('retains all ten original accepted packages and their immutable v1 index with
 });
 
 it('reads v2 public results and preserves old accepted identity through an uncommitted storage split and same-key repair', async () => {
-  const root = await fixture();
+  const root = await fixture(true);
   await setup(root);
   await finish(root);
   const before = await legacyBook(root);
@@ -977,7 +1029,7 @@ it('reads v2 public results and preserves old accepted identity through an uncom
 });
 
 it('refuses implicit v2 sibling migration before any public write and still receives a selected legacy result', async () => {
-  const sender = await fixture();
+  const sender = await fixture(true);
   await setup(sender, 'first', 'alpha');
   await finish(sender, 'first');
   await setup(sender, 'second', 'beta');
@@ -999,7 +1051,7 @@ it('refuses implicit v2 sibling migration before any public write and still rece
 });
 
 it('binds sibling detail inputs while excluding only the selected result page', async () => {
-  const root = await fixture();
+  const root = await fixture(true);
   await setup(root, 'first', 'alpha');
   await finish(root, 'first');
   await setup(root, 'second', 'beta');
@@ -1081,6 +1133,7 @@ it('stores a new docs/tasks PRD result in the same docs/tasks/complete root and 
   let files = (await inventory(root, await loadConfig(root))).files;
   expect(await checkReports(root, files)).toEqual([]);
   const orphan = `${evidenceRoot({ prd: source, key: 'feature' })}/orphan.md`;
+  await mkdir(dirname(join(root, orphan)), { recursive: true });
   await writeFile(join(root, orphan), 'Unlinked new result evidence.');
   files = (await inventory(root, await loadConfig(root))).files;
   expect((await checkReports(root, files)).join()).toContain(`WORK_REPORT_ORPHAN: ${orphan}`);
@@ -1295,3 +1348,256 @@ it('preserves byte conflicts between canonical index templates during journal re
   await deliver(root, 'probe', json(request));
   expect(await readFile(join(root, indexPath), 'utf8')).toBe(indexChange.after);
 });
+
+it('keeps a precise compact key dependency stable across sibling additions and observes physical rewrites', async () => {
+  const root = await fixture();
+  await setup(root, 'first', 'alpha');
+  await finish(root, 'first');
+  await setup(root, 'dependent', null);
+  const loaded = await loadTask(root, 'dependent');
+  loaded.task.plan.scope = ['src'];
+  const selector = resultSelector(prd, 'alpha');
+  loaded.task.plan.inputs.push(selector);
+  loaded.task.checkpoint = await capture(root, loaded.task);
+  await saveTask(root, loaded.task, loaded.raw);
+  const candidate = loaded.task.checkpoint.candidate;
+  const stamp = await inputStamp(root, loaded.task.checkpoint);
+  const binding = await readResultInput(root, selector);
+  await setup(root, 'second', 'beta');
+  await finish(root, 'second');
+  expect((await capture(root, loaded.task)).candidate).toBe(candidate);
+  expect(await readResultInput(root, selector)).toBe(binding);
+  expect(await inputStamp(root, loaded.task.checkpoint)).not.toBe(stamp);
+  const records = await readFile(join(root, recordsPath(prd)), 'utf8');
+  const beforeRestore = await inputStamp(root, loaded.task.checkpoint);
+  await writeFile(join(root, recordsPath(prd)), records + '\n');
+  await writeFile(join(root, recordsPath(prd)), records);
+  expect((await capture(root, loaded.task)).candidate).toBe(candidate);
+  expect(await inputStamp(root, loaded.task.checkpoint)).not.toBe(beforeRestore);
+  const changedDuringCheck = invoke(root, [
+    'run',
+    'dependent',
+    'checks',
+    '--',
+    process.execPath,
+    '--input-type=module',
+    '-e',
+    `import { readFileSync, writeFileSync } from 'node:fs';
+     const path = ${JSON.stringify(recordsPath(prd))};
+     const content = readFileSync(path, 'utf8');
+     writeFileSync(path, content + '\\n');
+     writeFileSync(path, content);`,
+  ]);
+  expect(changedDuringCheck.status).toBe(1);
+  expect(changedDuringCheck.stdout).toContain('WORK_CONTEXT_CHANGED during command');
+  expect((await loadTask(root, 'dependent')).task.evidence.at(-1)).toMatchObject({
+    criterion: 'checks',
+    result: 'pending',
+    summary: expect.stringContaining('contextChanged=true'),
+  });
+  for (const invalid of [
+    recordsPath(prd) + '#unknown=alpha',
+    recordsPath(prd) + '#result=../alpha',
+    recordsPath(prd) + '#result=missing',
+    recordsPath(prd) + '#result=alpha&criterion=checks',
+    '.work/private/records.json#result=alpha',
+    'docs/absent.md',
+  ]) {
+    loaded.task.plan.inputs = [invalid];
+    await expect(capture(root, loaded.task)).rejects.toThrow();
+  }
+  loaded.task.plan.inputs = [selector];
+  await rm(join(root, recordsPath(prd)));
+  await expect(inputStamp(root, loaded.task.checkpoint)).rejects.toThrow();
+  const target = join(root, '.work/records-copy.json');
+  await writeFile(target, records);
+  await symlink(target, join(root, recordsPath(prd)));
+  await expect(capture(root, loaded.task)).rejects.toThrow(/SYMLINK/);
+});
+
+it('binds compact sibling results while excluding only the selected key during same-key repair', async () => {
+  const root = await fixture();
+  await setup(root, 'first', 'alpha');
+  await finish(root, 'first');
+  await setup(root, 'second', 'beta');
+  await finish(root, 'second');
+  await passing(root, 'first');
+  const first = (await loadTask(root, 'first')).task;
+  expect(first.checkpoint!.files).toHaveProperty(resultSelector(prd, 'beta'));
+  expect(first.checkpoint!.files).not.toHaveProperty(resultSelector(prd, 'alpha'));
+  const alpha = (await results(root)).results.find((result) => result.key === 'alpha');
+  commit(root);
+  const second = await loadTask(root, 'second');
+  await updateTask(
+    root,
+    'second',
+    json({
+      revision: digest(second.raw),
+      reason: 'Fixture user repairs beta independently.',
+      reopen: true,
+      plan: { authorization: 'Fixture user authorizes beta repair.' },
+    }),
+  );
+  await passing(root, 'second');
+  await finish(root, 'second');
+  expect((await results(root)).results.find((result) => result.key === 'alpha')).toEqual(alpha);
+  expect((await capture(root, first)).candidate).not.toBe(first.checkpoint!.candidate);
+  expect(await checkReports(root, Object.keys(await publicFiles(root)))).toEqual([]);
+});
+
+it('recovers compact publication with a sibling input and preserves an interfering sibling edit', async () => {
+  const root = await fixture();
+  await setup(root, 'first', 'alpha');
+  await finish(root, 'first');
+  await setup(root, 'second', 'beta');
+  await finish(root, 'second');
+  commit(root);
+  const first = await loadTask(root, 'first');
+  await updateTask(
+    root,
+    'first',
+    json({
+      revision: digest(first.raw),
+      reason: 'Fixture alpha repair.',
+      reopen: true,
+      plan: { authorization: 'Fixture user authorizes alpha repair.' },
+    }),
+  );
+  await passing(root, 'first');
+  const beta = (await results(root)).results.find((result) => result.key === 'beta');
+  const request = await finish(root, 'first');
+  const { operation } = (await loadOperation(root, 'first'))!;
+  operation.done = false;
+  for (const change of operation.changes.slice(1)) {
+    if (change.before === null) await rm(join(root, change.path), { force: true });
+    else await writeFile(join(root, change.path), change.before);
+  }
+  const journal = json(operation);
+  await writeFile(join(root, operationPath('first')), journal);
+  const recordsChange = operation.changes.find((change) => change.path === recordsPath(prd))!;
+  const interfering = JSON.parse(recordsChange.after!) as CompactRecords<PublicResult>;
+  interfering.results.find((entry) => entry.result.key === 'beta')!.result.title = 'External edit';
+  const changed = json(interfering);
+  await writeFile(join(root, recordsPath(prd)), changed);
+  await expect(deliver(root, 'first', json(request))).rejects.toThrow(
+    /WORK_CONTEXT_CHANGED|WORK_DELIVERY_CONFLICT/,
+  );
+  expect(await readFile(join(root, recordsPath(prd)), 'utf8')).toBe(changed);
+  expect(await readFile(join(root, operationPath('first')), 'utf8')).toBe(journal);
+  await writeFile(join(root, recordsPath(prd)), recordsChange.after!);
+  const replay = invoke(root, ['deliver', 'first', '--stdin'], request);
+  expect(replay.status, replay.stderr).toBe(0);
+  expect(JSON.parse(replay.stdout)).toMatchObject({ completed: true, replayed: true });
+  expect((await results(root)).results.find((result) => result.key === 'beta')).toEqual(beta);
+  expect(await checkReports(root, Object.keys(await publicFiles(root)))).toEqual([]);
+});
+
+it('validates compact records and receives a logical-manifest result without author records or inherited authority', async () => {
+  const root = await fixture();
+  await setup(root, 'first', 'alpha');
+  await finish(root, 'first');
+  await setup(root, 'second', 'beta');
+  const preparation = invoke(
+    root,
+    ['deliver', 'second', '--stdin'],
+    await prepareRequest(root, 'second'),
+  );
+  expect(preparation.status, preparation.stderr).toBe(0);
+  const completion = invoke(
+    root,
+    ['deliver', 'second', '--stdin'],
+    await completeRequest(root, 'second'),
+  );
+  expect(completion.status, completion.stderr).toBe(0);
+  const book = await results(root);
+  expect(book.version).toBe(4);
+  const beta = book.results.find((result) => result.key === 'beta')!;
+  expect(beta.version.files).toHaveProperty(resultSelector(prd, 'alpha'));
+  const artifacts = await resultFiles(root, beta);
+  expect(Object.keys(artifacts)).toHaveLength(beta.criteria.length);
+  const publicBefore = await publicFiles(root);
+  await rm(join(root, '.work'), { recursive: true });
+  expect(await checkReports(root, Object.keys(publicBefore))).toEqual([]);
+  await initializeMember(root, 'bob');
+  for (const path of [indexPath, reportPath(prd), recordsPath(prd)]) {
+    const content = await readFile(join(root, path), 'utf8');
+    await writeFile(join(root, path), content + 'External tampering');
+    expect(await checkReports(root, Object.keys(publicBefore))).not.toEqual([]);
+    await expect(receive(root, reportPath(prd), 'beta')).rejects.toThrow();
+    await rm(join(root, path));
+    expect(await checkReports(root, Object.keys(publicBefore))).not.toEqual([]);
+    await writeFile(join(root, path), content);
+  }
+  const store = JSON.parse(
+    await readFile(join(root, recordsPath(prd)), 'utf8'),
+  ) as CompactRecords<PublicResult>;
+  delete store.results[0]!.artifacts.checks;
+  const invalid = json(store);
+  const originalReport = await readFile(join(root, reportPath(prd)), 'utf8');
+  const originalRecords = await readFile(join(root, recordsPath(prd)), 'utf8');
+  const originalIndex = await readFile(join(root, indexPath), 'utf8');
+  const source = await markdown(renderCompactBook(store, invalid));
+  await writeFile(join(root, recordsPath(prd)), invalid);
+  await writeFile(join(root, reportPath(prd)), source);
+  const index = parseIndex(originalIndex);
+  index.prds[0]!.report.sha256 = digest(source);
+  await writeFile(join(root, indexPath), await markdown(renderIndex(index)));
+  expect((await checkReports(root, Object.keys(publicBefore))).join()).toContain(
+    'one compact artifact per criterion',
+  );
+  await expect(receive(root, reportPath(prd), 'beta')).rejects.toThrow();
+  await writeFile(join(root, recordsPath(prd)), originalRecords);
+  await writeFile(join(root, reportPath(prd)), originalReport);
+  await writeFile(join(root, indexPath), originalIndex);
+  const received = invoke(root, ['receive', reportPath(prd), 'beta']);
+  expect(received.status, received.stderr).toBe(0);
+  const id = `beta-${digest(json([prd, 'beta'])).slice(0, 16)}`;
+  const task = (await loadTask(root, id)).task;
+  expect(task).toMatchObject({
+    checkpoint: null,
+    evidence: [],
+    plan: { scope: [], authorization: '' },
+  });
+  expect(task.notes.join(' ')).toContain('historical manifest paths: none');
+  expect(await publicFiles(root)).toEqual(publicBefore);
+});
+
+it('keeps twenty PRDs at one report and one records file each while preserving three hundred criterion records', async () => {
+  const root = await fixture();
+  const prds = Array.from({ length: 20 }, (_, index) => `docs/tasks/product-${index}/prd.md`);
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  config.taskDocuments = prds.map((path) => ({ identity: path, kind: 'prd', path }));
+  for (const path of prds) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), '# Scaled fixture PRD\n');
+  }
+  await writeFile(configPath, json(config));
+  let count = 0;
+  for (const [index, source] of prds.entries()) {
+    for (const key of ['alpha', 'beta', 'gamma']) {
+      const id = `product-${index}-${key}`;
+      await setup(root, id, key, source, ['criterion-four', 'criterion-five']);
+      const loaded = await loadTask(root, id);
+      loaded.task.plan.scope = ['src'];
+      await saveTask(root, loaded.task, loaded.raw);
+      await passing(root, id);
+      await finish(root, id);
+    }
+    const book = await results(root, source);
+    expect(book.results).toHaveLength(3);
+    for (const result of book.results) {
+      expect(result.criteria).toHaveLength(5);
+      expect(Object.keys(await resultFiles(root, result))).toHaveLength(5);
+      count += result.evidence.length;
+    }
+  }
+  expect(count).toBe(300);
+  const files = (await inventory(root, await loadConfig(root))).files;
+  const packages = files.filter((path) => path.startsWith('docs/tasks/complete/'));
+  expect(packages.filter((path) => path.endsWith('.md'))).toHaveLength(20);
+  expect(packages.filter((path) => path.endsWith('/records.json'))).toHaveLength(20);
+  expect(packages).toHaveLength(40);
+  await rm(join(root, '.work'), { recursive: true });
+  expect(await checkReports(root, files)).toEqual([]);
+}, 60_000);

@@ -50,7 +50,7 @@ requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解
 
 plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance、nextAction 和 stopCondition 来自真实任务。scope 是允许写入的文件／目录；inputs 默认 package.json 与 harness.config.json，再补实际依赖；sources 只登记实际遵循的需求子文档，requirement.source 自动参与文件摘要。method 为 automated／review／behavior。其余字段由生成器提供，按需填 decisions、dependencies、blockers 与 sharedRef，不复制整套空模板。示例不授予业务修改权限，脚本也不能认证授权文本的来源。
 
-首次 ensure 保存初始检查点，完整且无阻塞的契约进入 C0_READY；不完整的记录保持草稿。ensure 退出成功表示已创建或读取记录，能否执行仍看 assessment.ready。Agent 确认授权和依赖后用 update 标记实施，不会为每轮会话另建记录。原有 v1 任务和 `.work/evidence` 不迁移、不删除；新 clone 从仓库内生成器落地本人目录。
+首次 ensure 保存初始检查点，完整且无阻塞的契约进入 C0_READY；不完整的记录保持草稿。ensure 退出成功表示已创建或读取记录，能否执行仍需核对 assessment 并展开必要引用。Agent 确认授权和依赖后用 update 标记实施，不会为每轮会话另建记录。原有 v1 任务和 `.work/evidence` 不迁移、不删除；新 clone 从仓库内生成器落地本人目录。
 
 源码范围的 ensure／update 会补入 `quality-review`，保留已有同名 criterion 文本但要求 method 为 review。自动登记后的契约参与候选摘要；ensure 重试不重复添加，读取旧记录不会改写其契约。`assessment.qualityReview` 返回是否需要及当前原件状态；ready 只表示可继续执行，pending 审查仍阻止生成交付草稿。
 
@@ -66,7 +66,18 @@ pnpm work check api-probe
 pnpm work sync api-probe "已审阅实际差异，写明影响与下一步"
 ```
 
-context 只返回当前任务的需求关联、授权／范围／依赖输入、决定及其来源和确认状态、接受／归档状态、下一步、revision、该动作所需字段、核对结果及对应章节正文；不输出历史 notes、完整 checkpoint、原始日志或其他动作细则。即使上下文有问题，仍返回可读摘要和错误，便于恢复；不能把其退出成功当成 check 通过。status 输出任务列表及当前 assessment，不需要预先初始化；空列表不会写入 .work。assessment.releaseDisposition 和 readyForAcceptance 由当前候选、原件、有效草稿/附件及交付操作是否结束推导，不把旧 state.json 的标签当作当前事实；读取不会改写旧记录。ready 表示现场可继续操作，不表示已经接受。
+`status` 是任务目录，支持 `--query`、`--stage`、`--archived active|archived|all` 和分页；默认不展开归档任务，不执行全任务 assess，明确返回尚未核验。`context` 只核对选中的任务，默认提供有界字段、现场结论和当前动作的章节导航；`check` 仍完整核对契约、候选、原件和交付恢复。记录阶段、当前核验和真实接受分别表达，命令退出成功不等于通过或接受。
+
+`guide <action>` 先返回章节入口，用 `--section <ref>` 展开本次必需正文。例如：
+
+```sh
+pnpm work status --query auth --limit 10
+pnpm work guide start --section 'docs/coordination.md#开始任务'
+```
+
+记录字段、数组、核验错误与已登记证据默认有界，省略值给出明确的 `$read` 定位；沿返回 argv 调用 `read` 精确展开当前任务、核验细节或原件。分页使用 `--offset`、`--limit`，续页携带返回的 `--hash`，原件变化则拒绝混读不同版本。长字符串按 Unicode 字符分页，不直接截断 JSON；目录条数受限之外还有结构输出预算。`checkedReady` 表示完整现场核验结论，`ready` 还考虑当前视图是否省略必要授权／阻塞；未展开不能当作已处理。CLI 不另存“已读”状态，Agent 展开引用后结合实际授权和完整核验决定下一步。请求或系统异常若无可重读来源，只给有界诊断并明确完整正文未持久化，不伪造详情入口。
+
+`read-result <prd> [key]` 不需要作者 `.work`：无 key 时分页列成果，有 key 时默认读取 `/summary`；用 `--select /result` 取得版本和验收元数据，或 `--select /artifacts/<criterion>` 读取该项公开证据，继续沿返回页展开。旧、新公共格式使用同一读取入口。完整性校验仍核对实际数据，工具的有界输出不能阻止显式子命令或宿主直接读取任意全文。
 
 事实变化时，Agent 用 `pnpm work update api-probe --stdin` 提交，例如：
 
@@ -83,11 +94,11 @@ update 可改上述 plan 字段和非释放阶段（C1_IMPLEMENTATION／C1_EVIDE
 
 契约修改保留旧 checkpoint 与历史证据，并撤回旧接受／释放结论；Agent 审阅变化后再 sync，不能用 update 顺带承认未知代码变化。只改下一步且候选不变可沿用原证据。归档记录默认只读，确有当前授权时用 `reopen: true` 和非空 `plan.authorization` 显式重开，再核对及 sync。旧记录同样可用 update，不强制补 requirement。
 
-check 只读；ready 表示当前记录与现场一致，可继续核对已授权动作，evidence 单独报告验收结果。缺失契约、依赖未就绪、归档、上下文或非法释放结论返回非零。ready 为 true 不表示任务已完成。
+check 只读；退出码按完整现场核验决定，缺失契约、依赖未就绪、归档、上下文或非法释放结论返回非零。有省略内容时还须按上述引用补全上下文；evidence 单独报告验收结果，ready 为 true 不表示任务已完成。
 
 sync 只更新检查点，保留历史证据。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
 
-文件摘要会覆盖固定公共策略文件和任务所声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不再默认塞入全部操作手册；旧任务已有的来源继续兼容。路径、身份与格式检查不因减少上下文而放宽。
+文件摘要覆盖固定公共策略文件和任务声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不默认塞入全部操作手册，旧来源继续兼容。新公共包的精确输入可写为 `docs/tasks/complete/<prd-id>/records.json#result=<key>`，只绑定该成果的接受记录与公开证据；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。运行期间对同一物理包的写入仍会触发 inputStamp 的保守变更检测。
 
 ## 实施命令
 
@@ -235,7 +246,9 @@ ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 upd
 }
 ```
 
-命令核对必需原件、候选、私有草稿和接受绑定，按注册稳定身份派生唯一成果目录 `docs/tasks/complete/<prd-id>/report.md`；新旧 PRD 一致。每个 key 保存自己的受验版本、必要证据和接受；同 key 更新保留兄弟成果，任务总索引每 PRD 一条，不表示 PRD 整体完成。新 key 可直接追加；替换已有 key 时，旧结果与必要附件须在当前 HEAD 可恢复，按 key 比较，未提交的兄弟成果不阻塞替换。公共文件遭人工修改时先核对，不能覆盖。不会自动提交、上传或部署；接受文本的真实性不能由字符串校验证明。
+命令核对必需原件、候选、草稿和接受绑定，按稳定 PRD 身份派生 `docs/tasks/complete/<prd-id>/`。没有既有 book 的 PRD 写 v4：一个 `records.json` 保存各 key 的受验版本、接受与逐验收项公开证据，一个 `report.md` 从记录生成可读结果；不按 key 或 criterion 继续增加公开 Markdown。报告与记录互相绑定完整性，报告不是另一个可独立修改的接受来源。旧 v1/v2/v3 继续读取，已有旧 book 的增量保持兼容写法，不在业务交付中迁移兄弟成果。
+
+同 key 更新保留兄弟结果，总索引每 PRD 一条，不表示整份 PRD 完成。新 key 可直接追加；替换已有 key 时，旧结果与必要证据须在当前 HEAD 可恢复，按 key 比较，未提交兄弟不阻塞替换。公共文件遭人工修改时拒绝覆盖，不自动提交或发布；接受文本真实性仍由实际人类意见支持。每项证据的 method、representation、原件哈希、公开内容哈希和环境保留，汇总成一包不将摘录提升为原件。
 
 中断时原样重试原 v2 prepare／complete 请求，工具依据 journal 恢复；未受干扰的同一请求幂等。修改后的索引、汇总、附件或状态拒绝覆盖，未结束操作阻止其他记录写入。已完成请求也不重写被人恢复的旧字节；后续存在合法更新时读取当前成果，不重放旧快照。reopen 只更新个人状态，不改公共事实。公开格式、链接与完整性单独检查，输出排除不是免检。
 

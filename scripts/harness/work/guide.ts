@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { nodeText, parseMarkdown } from '../markdown.ts';
 import { checkedPath } from './records.ts';
 import type { Task } from './records.ts';
+import { readPage } from './output.ts';
+import type { ReadOptions } from './output.ts';
 
 const sections: Record<string, [string, string][]> = {
   start: [
@@ -51,17 +53,51 @@ async function section(root: string, file: string, title: string) {
     ?.start.offset;
   return {
     ref: `${file}#${title}`,
-    body: source.slice(heading.position!.start.offset, end).trim(),
+    blocks: nodes
+      .slice(index)
+      .filter((node) => node.position!.start.offset < (end ?? source.length))
+      .map((node) => ({
+        type: node.type,
+        body: source.slice(node.position!.start.offset, node.position!.end.offset).trim(),
+      })),
   };
 }
 
-export async function guide(root: string, action: string) {
+export async function guide(
+  root: string,
+  action: string,
+  options?: ReadOptions,
+  selectedRef?: string,
+) {
   const selected = Object.hasOwn(sections, action) ? sections[action] : undefined;
   if (!selected) throw new Error(`WORK_ACTION: choose ${Object.keys(sections).join(', ')}`);
   const reading = [];
   for (const [file, title] of [['docs/coordination.md', '共同规则'], ...selected])
     reading.push(await section(root, file!, title!));
-  return { action, reading };
+  if (selectedRef !== undefined) {
+    const chosen = reading.find((entry) => entry.ref === selectedRef);
+    if (!chosen) throw new Error('WORK_GUIDE_SECTION: choose a ref from this action navigation');
+    return {
+      action,
+      ref: chosen.ref,
+      ...readPage(chosen, { offset: 0, ...options, select: options?.select || '/blocks' }, [
+        'guide',
+        action,
+        '--section',
+        chosen.ref,
+      ]),
+    };
+  }
+  if (options && (options.offset || options.limit !== undefined || options.hash || options.select))
+    throw new Error('WORK_GUIDE_SECTION: select one section before paging');
+  return {
+    action,
+    reading: reading.map((entry) => ({
+      ref: entry.ref,
+      blocks: entry.blocks.length,
+      read: { argv: ['guide', action, '--section', entry.ref] },
+    })),
+  };
 }
 
 export function taskSummary(task: Task, action: string) {

@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
-import { evidenceRoot, indexPath, optionalText, reportPath, resultPath } from './reports.ts';
-import { recordsPath } from './compact-store.ts';
+import { bookPaths, indexPath, optionalText } from './reports.ts';
+import { documentCatalog } from '../task-documents.ts';
 
 interface Change {
   path: string;
@@ -13,9 +13,9 @@ interface Change {
   after: string | null;
 }
 export interface Operation {
-  version: 1;
+  version: 2;
   request: string;
-  kind: 'prepare' | 'complete' | 'reopen';
+  kind: 'prepare' | 'complete';
   candidate: string;
   inputs: Record<string, string>;
   changes: Change[];
@@ -26,10 +26,13 @@ export const operationPath = (id: string) => `.work/tasks/${id}/delivery/operati
 export async function loadOperation(root: string, id: string) {
   const raw = await optionalText(root, operationPath(id));
   if (raw === null) return null;
-  const op = JSON.parse(raw) as Operation;
+  const value = JSON.parse(raw);
+  // Old journals are data only. An explicit fresh prepare may replace them, never replay them.
+  if (value.version === 1) return { operation: null, raw };
+  const op = value as Operation;
   if (
-    op.version !== 1 ||
-    !['prepare', 'complete', 'reopen'].includes(op.kind) ||
+    op.version !== 2 ||
+    !['prepare', 'complete'].includes(op.kind) ||
     !/^[a-f0-9]{64}$/.test(op.request) ||
     !Array.isArray(op.changes) ||
     typeof op.done !== 'boolean'
@@ -41,21 +44,14 @@ export async function loadOperation(root: string, id: string) {
   const task = parseTask(state.after);
   if (task.plan.id !== id) throw new Error('WORK_DELIVERY_OPERATION: state must be last');
   const target = task.plan.result;
+  const targets = target ? bookPaths(target.prd, await documentCatalog(root)) : null;
   const allowed = (path: string) =>
     path === indexPath ||
     path === `.work/tasks/${id}/state.json` ||
     (task.delivery?.version === 2 &&
-      target &&
-      (path === reportPath(target.prd) ||
-        path === recordsPath(target.prd) ||
-        path === resultPath(target) ||
-        path.startsWith(`${evidenceRoot(target)}/`))) ||
-    (task.delivery?.version === 1 &&
-      (path.startsWith(`docs/tasks/complete/${id}/`) ||
-        path.startsWith(`docs/tasks/pending/${id}/`))) ||
-    (op.kind === 'prepare' &&
-      (path === `.work/tasks/${id}/delivery/draft.md` ||
-        path.startsWith(`.work/tasks/${id}/delivery/evidence/`)));
+      targets &&
+      (path === targets.report || path === targets.records)) ||
+    (op.kind === 'prepare' && path === `.work/tasks/${id}/delivery/draft.md`);
   const paths = new Set<string>();
   for (const change of op.changes) {
     if (
@@ -134,10 +130,10 @@ export async function commitDelivery(
     throw new Error('WORK_CONFLICT: task changed before delivery');
   changes.push({ path: statePath, before: raw, after: json(task) });
   const captured = await capture(root, task);
-  if (kind !== 'reopen' && captured.candidate !== task.checkpoint?.candidate)
+  if (captured.candidate !== task.checkpoint?.candidate)
     throw new Error('WORK_DELIVERY_STALE: candidate changed before publication');
   const op: Operation = {
-    version: 1,
+    version: 2,
     request,
     kind,
     candidate: captured.candidate,
@@ -146,8 +142,10 @@ export async function commitDelivery(
     done: false,
   };
   const previous = await loadOperation(root, id);
-  if (previous && !previous.operation.done)
+  if (previous?.operation && !previous.operation.done)
     throw new Error('WORK_DELIVERY_PENDING: resume the original request');
+  if (previous && !previous.operation && kind !== 'prepare')
+    throw new Error('WORK_DELIVERY_OBSOLETE: prepare a new v5 draft; old journal cannot replay');
   const path = operationPath(id);
   const journal = json(op);
   await replace(root, id, { path, before: previous?.raw ?? null, after: journal });
@@ -159,18 +157,19 @@ export async function replayDelivery(
   id: string,
   request: string,
   verify: (task: Task, operation: Operation) => Promise<void>,
+  freshPrepare = false,
 ) {
   const owned = await loadTask(root, id);
   const loaded = await loadOperation(root, id);
+  if (loaded && !loaded.operation && !freshPrepare)
+    throw new Error('WORK_DELIVERY_OBSOLETE: prepare a new v5 draft; old journal cannot replay');
   const op = loaded?.operation;
   if (!op || (op.done && op.request !== request)) return false;
   if (op.request !== request) throw new Error('WORK_DELIVERY_PENDING: resume the original request');
   const state = op.changes.at(-1)!;
   const restored = parseTask(state.after!);
   if (restored.delivery?.version !== 2)
-    throw new Error(
-      'WORK_DELIVERY_LEGACY: old public operations are read-only; preserve the journal and reconcile before upgrading',
-    );
+    throw new Error('WORK_DELIVERY_OBSOLETE: prepare a new v5 draft');
   if (restored.member !== owned.task.member || restored.workspace !== root)
     throw new Error('WORK_OWNER: delivery operation belongs to another workspace');
   const current = await optionalText(root, state.path);

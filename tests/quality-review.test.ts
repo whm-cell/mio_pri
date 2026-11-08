@@ -37,15 +37,18 @@ async function fixture(scope = ['src'], development = true) {
     await mkdir(dirname(join(root, file)), { recursive: true });
     await cp(join(project, file), join(root, file));
   }
-  // This fixture models a repository without this project's task-document registry.
+  // Development results belong to this fixture's registered PRD directory.
   const configPath = join(root, 'harness.config.json');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
-  delete config.taskDocuments;
+  config.taskDocuments = [
+    { identity: 'docs/tasks/quality/prd.md', kind: 'prd', path: 'docs/tasks/quality/prd.md' },
+  ];
   await writeFile(configPath, JSON.stringify(config));
   for (const [file, value] of Object.entries({
     'package.json': '{"type":"module"}',
     'AGENTS.md': '# Fixture rules',
     'docs/api.md': '# API',
+    'docs/tasks/quality/prd.md': '# Quality fixture requirement',
     'src/value.ts': 'export const value = 1;',
   })) {
     await mkdir(dirname(join(root, file)), { recursive: true });
@@ -55,7 +58,9 @@ async function fixture(scope = ['src'], development = true) {
     requirement: { source: 'docs/api.md', section: 'API', key: 'quality' },
     plan: {
       goal: 'Change a fixture capability.',
-      ...(development ? { result: { prd: 'docs/api.md', key: 'fixture-capability' } } : {}),
+      ...(development
+        ? { result: { prd: 'docs/tasks/quality/prd.md', key: 'fixture-capability' } }
+        : {}),
       norms: { paths: [], reason: 'Fixture constant changes no public normative behavior.' },
       scope,
       inputs: ['src'],
@@ -74,7 +79,10 @@ async function fixture(scope = ['src'], development = true) {
   return { root, id, path, state, context, request };
 }
 
-function normsFixture(task: Task, sources = ['docs/api.md']) {
+function normsFixture(
+  task: Task,
+  sources = ['docs/api.md', ...(task.plan.result ? [task.plan.result.prd] : [])],
+) {
   return {
     version: 2,
     candidate: task.checkpoint!.candidate,
@@ -198,14 +206,10 @@ it('runs the real verify/evidence/delivery flow, blocks incomplete reviews and r
       action: 'prepare',
       revision: f.context().revision,
       title: 'Fixture result',
-      modules: ['fixture'],
+      locations: [{ path: 'src/value.ts', purpose: 'Fixture constant' }],
       outcomes: 'Fixture implementation is ready.',
-      decisions: 'Use existing protocol.',
+      verification: 'Fixture checks and actual review originals.',
       limitations: 'Isolated fixture only.',
-      evidence: ['checks', 'quality-review', 'norms-review'].map((criterion) => ({
-        criterion,
-        representation: 'original',
-      })),
     });
   expect(prepare().output).toContain('WORK_DELIVERY_EVIDENCE');
   const candidate = f.context().assessment.candidate as string;

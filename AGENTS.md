@@ -2,7 +2,7 @@
 
 资料按[用途导航](docs/index.md)逐步展开，只登记实际遵循的子文档；新增资料链接回权威入口，不按需求完成搬迁现行契约或既有 PRD。
 
-`docs/` 汇总公共资料；现行规范按职责维护，需求、专属设计与未采纳候选统一从[任务资料与成果](docs/tasks/index.md)进入 `docs/tasks/`。位置与稳定身份只在 `harness.config.json` 的 `taskDocuments` 注册，迁移前后用 `pnpm work documents` 只读核对；旧记录和接受快照不批量改写。
+`docs/` 汇总公共资料；现行规范按职责维护，需求、专属设计与未采纳候选统一从[任务资料与成果](docs/tasks/index.md)进入 `docs/tasks/`。位置与稳定身份只在 `harness.config.json` 的 `taskDocuments` 注册，迁移前后用 `pnpm work documents` 只读核对；个人旧记录不批量改写，公共整理保持接受事实而非旧存储格式。
 
 当前交付范围是 TypeScript 插件服务基础护栏。需求、已采用规则、模块边界与待定项见 [底座规格](docs/foundation.md)，对外契约见 [API 约定](docs/api.md)，启动和检查见 [README](README.md)。
 
@@ -11,7 +11,7 @@
 - 用户只需说“继续当前任务”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)结合对话、公共 PRD／规格和实际记录定位任务、判断 C0/C1 并推进；仅澄清真正影响下一步的缺口。用户无需指定 Skills、ID、哈希、命令或长提示词；Agent 维护本人 checkout/worktree 中忽略的 `.work/`。
 - Agent 收到新目标先取 `pnpm work guide start`，按返回的章节入口展开当前需要的拆解与生命周期说明，再用 `ensure --stdin` 初始化／复用记录；中断后用分页 `status` 定位原任务，再取 `context <task> resume`。列表中的记录阶段不是当前核验结论；省略的授权、阻塞和验收内容经 `read` 精确展开，不能以摘要替代。事实变化用带 revision 的 `update --stdin` 更新。读取方式见[记录索引](docs/work-records.md)，不递归加载 `.work` 或全部历史；仓库命令不依赖个人 Skills。
 - Agent 编辑前先建档、核对现场并进入 `C1_IMPLEMENTATION`；安装依赖、生成或其他命令型实施经 `work exec <task> -- <argv ...>` 检查后启动。编辑工具仍由 Agent 在写入前遵守同一条件，CLI 不拦截任意宿主写入。契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。团队需求、设计草案与跨人交接放团队可访问的来源；个人过程留在 `.work`。单任务只设一个写入者；代码写入冲突时隔离工作区。
-- 开发成果按 [PRD 成果索引](docs/tasks/index.md) 查找，一份 PRD 一个公共入口。仅明确对应可验收开发能力的任务设置 `plan.result={prd,key}`；证据齐全后 deliver prepare 只生成个人草稿和必要附件，交回结果、候选、验证与限制。收到针对该结果的真实接受后执行 complete，按稳定成果键更新同一 PRD 汇总，保留其他成果。维护、演练与流程收尾只在本人 `.work`，检查后按需 archive，不要求公共 complete；历史护栏依据与 PRD 进度分开。重开不改旧公共事实，不继承新候选通过，成果数量不表示 PRD 整体完成。
+- 开发成果按 [PRD 成果索引](docs/tasks/index.md) 查找，一份 PRD 一个公共入口。仅明确对应可验收开发能力的任务设置 `plan.result={prd,key}`；证据齐全后 deliver prepare 只生成个人草稿，交回完成范围、逻辑入口、候选、验证与限制。收到针对该结果的真实接受后执行 complete，按稳定成果键更新同一 PRD 汇总，保留其他成果。维护、演练与流程收尾只在本人 `.work`，检查后按需 archive，不要求公共 complete；历史护栏依据与 PRD 进度分开。重开不改旧公共事实，不继承新候选通过，成果数量不表示 PRD 整体完成。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。
 - 源码任务在 verify 阶段执行 `quality-review`：审阅算法成本、未使用的公共函数/方法及未复用的已有实现。缺项、缺证或旧候选原件不能交付；审查方法与不适用理由见 [验证协议](docs/coordination.md#验证与接受)，脚本不代替实际审阅。
 - 交回前按[三方对账](docs/coordination.md#交回与下一步)核对需求与方案、现行规范、已接受成果。开发成果及适用的维护用 `plan.norms={version:2,paths,reason}` 登记同一 `norms-review`；无规范影响允许空 paths 并说明理由，维护不造 result。必要正文在 verify 前更新，新证据及交付缺项拒绝；旧接受与原件不自动升级，complete 不自动采纳提案或改写规范。

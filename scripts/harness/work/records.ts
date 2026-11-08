@@ -67,8 +67,6 @@ export interface Task {
 export const digest = (bytes: string | Buffer): string =>
   createHash('sha256').update(bytes).digest('hex');
 export const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
-export const resultBookPath = (prd: string) =>
-  `docs/tasks/complete/prd-${digest(prd).slice(0, 16)}/report.md`;
 
 export function identifier(value: string): string {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(value))
@@ -235,13 +233,13 @@ export function parseTask(raw: string): Task {
         !/^[a-f0-9]{64}$/.test(ref.candidate)
       )
         throw new Error('WORK_SCHEMA: delivery reference');
-      const expected =
+      // Historical personal references remain readable; public operations resolve current ownership.
+      if (
         kind === 'draft'
-          ? `.work/tasks/${plan.id}/delivery/draft.md`
-          : delivery.version === 2
-            ? resultBookPath((plan.result as TaskPlan['result'])!.prd)
-            : `docs/tasks/complete/${plan.id}/report.md`;
-      if (ref.path !== expected) throw new Error('WORK_SCHEMA: delivery path');
+          ? ref.path !== `.work/tasks/${plan.id}/delivery/draft.md`
+          : !/^docs\/tasks\/[a-z0-9/_-]+\/report\.md$/.test(ref.path)
+      )
+        throw new Error('WORK_SCHEMA: delivery path');
       if (
         delivery.version === 2 &&
         (plan.result === undefined ||
@@ -358,7 +356,7 @@ export async function deliveryPending(root: string, id: string): Promise<boolean
         'utf8',
       ),
     );
-    return operation.done !== true;
+    return operation.version !== 1 && operation.done !== true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return false;
@@ -370,7 +368,7 @@ export async function saveTask(root: string, task: Task, previous?: string) {
   const path = await checkedPath(root, `.work/tasks/${identifier(task.plan.id)}/state.json`);
   parseTask(json(task));
   if (await deliveryPending(root, task.plan.id))
-    throw new Error('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
+    throw new Error('WORK_DELIVERY_PENDING: resume the original delivery request');
   await mkdir(dirname(path), { recursive: true });
   if (previous === undefined) return writeFile(path, json(task), { flag: 'wx' });
   const temporary = `${path}.${randomUUID()}.tmp`;

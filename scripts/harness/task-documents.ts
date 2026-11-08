@@ -5,14 +5,11 @@ import type { HarnessConfig, TaskDocument } from './inventory.ts';
 import { markdownLinks, nodeText, parseMarkdown } from './markdown.ts';
 import type { MarkdownNode } from './markdown.ts';
 import { checkedPath } from './work/records.ts';
+import { prdDirectory } from './work/compact-store.ts';
 
 export const resultDocument = (path: string) =>
-  ['docs/tasks/complete', 'docs/tasks/history', 'docs/tasks/pending'].some((root) =>
-    beneath(path, root),
-  );
-export const requirementsPath = 'docs/tasks/requirements.md';
-export const taskNavigation = (path: string) =>
-  path === 'docs/tasks/index.md' || path === requirementsPath;
+  /^docs\/tasks\/[a-z0-9][a-z0-9_-]*\/complete\//.test(path);
+export const taskNavigation = (path: string) => path === 'docs/tasks/index.md';
 
 export function publicDocument(path: string, config: HarnessConfig): boolean {
   return (
@@ -108,6 +105,26 @@ export async function inspectTaskDocuments(root: string, config: HarnessConfig) 
     }
   }
   const paths = new Set(documents.map((entry) => entry.path));
+  const owners = new Set<string>();
+  for (const entry of documents.filter((item) => item.kind === 'prd')) {
+    try {
+      const directory = prdDirectory(entry.path);
+      if (owners.has(directory)) throw new Error(`TASK_DOCUMENT_DUPLICATE: ${directory}`);
+      owners.add(directory);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  for (const entry of documents.filter((item) => item.kind !== 'prd')) {
+    const directory = entry.path.split('/').slice(0, 3).join('/');
+    if (
+      !owners.has(directory) ||
+      (beneath(entry.path, `${directory}/pending`) && entry.kind !== 'proposal')
+    )
+      errors.push(
+        `TASK_DOCUMENT_OWNER: ${entry.path}: require its PRD directory and classify pending as proposal`,
+      );
+  }
   for (const entry of documents) {
     for (const alias of entry.aliases ?? []) {
       const source = await readFile(await checkedPath(root, alias), 'utf8');
@@ -151,7 +168,7 @@ export function resolveDocument(
 
 export function resolvePrd(path: string, catalog: Awaited<ReturnType<typeof documentCatalog>>) {
   const resolved = resolveDocument(path, catalog);
-  if (catalog.config.taskDocuments !== undefined && resolved.kind !== 'prd')
+  if (resolved.kind !== 'prd')
     throw new Error('WORK_RESULT: result.prd must identify a registered PRD');
   return resolved.identity;
 }

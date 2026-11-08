@@ -7,12 +7,7 @@ import { checkReports } from './work/reports.ts';
 import { headingAnchors, markdownLinks, parseMarkdown } from './markdown.ts';
 import type { MarkdownNode } from './markdown.ts';
 import { checkApiDocuments } from './check-api-documents.ts';
-import {
-  inspectTaskDocuments,
-  requirementsPath,
-  resultDocument,
-  taskNavigation,
-} from './task-documents.ts';
+import { inspectTaskDocuments, resultDocument, taskNavigation } from './task-documents.ts';
 
 /** CommonMark paths/privacy for all documents; current anchors/discovery only for active pages. */
 export async function checkDocuments(
@@ -65,13 +60,7 @@ export async function checkDocuments(
         }
         if (navigation.has(url)) edges.get(file)!.push(local);
         const destination = documents.get(local);
-        if (
-          anchor &&
-          destination &&
-          !beneath(file, 'docs/tasks/history') &&
-          !beneath(local, 'docs/tasks/history') &&
-          !headingAnchors(destination).has(anchor)
-        )
+        if (anchor && destination && !headingAnchors(destination).has(anchor))
           errors.push(`LINK_ANCHOR ${file}: ${url}`);
       } catch {
         errors.push(`LINK_MISSING ${file}: ${url}`);
@@ -84,18 +73,13 @@ export async function checkDocuments(
     for (const file of queue) {
       if (reached.has(file)) continue;
       reached.add(file);
-      if (beneath(file, 'docs/tasks/history') || aliases.has(file)) continue;
+      if (aliases.has(file)) continue;
       for (const target of edges.get(file) ?? [])
         if (!reached.has(target) && (!resultDocument(file) || resultDocument(target)))
           queue.push(target);
     }
     for (const file of documents.keys())
-      if (
-        file.startsWith('docs/') &&
-        !beneath(file, 'docs/tasks/history') &&
-        !aliases.has(file) &&
-        !reached.has(file)
-      )
+      if (file.startsWith('docs/') && !aliases.has(file) && !reached.has(file))
         errors.push(`DOCUMENT_UNREACHABLE ${file}`);
   } else if ([...documents.keys()].some((file) => file.startsWith('docs/')))
     errors.push('DOCUMENT_ENTRY_MISSING docs/index.md');
@@ -110,8 +94,8 @@ export async function checkDocuments(
       !classified.has(file)
     )
       errors.push(`TASK_DOCUMENT_UNCLASSIFIED ${file}`);
-  if (registry.documents.length && !documents.has(requirementsPath))
-    errors.push(`TASK_DOCUMENT_ENTRY_MISSING ${requirementsPath}`);
+  if (registry.documents.length && !documents.has('docs/tasks/index.md'))
+    errors.push('TASK_DOCUMENT_ENTRY_MISSING docs/tasks/index.md');
   errors.push(...checkApiDocuments(documents, edges));
   const index = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
   const indexChecked = index.status === 0;

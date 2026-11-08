@@ -88,7 +88,7 @@ it('recognizes real compatibility anchors without accepting tags inside HTML com
   }
 });
 
-it('retains historic path/privacy checks while exempting historic heading semantics', async () => {
+it('does not exempt retired history directories from path, anchor or classification checks', async () => {
   const path = 'docs/tasks/history/old.md';
   const root = await fixture({
     [path]:
@@ -97,14 +97,15 @@ it('retains historic path/privacy checks while exempting historic heading semant
   const result = await errors(root);
   expect(result).toContain(`PERSONAL_PATH ${path}`);
   expect(result).toContain(`LINK_PRIVATE ${path}: ../../../.work/log.md`);
-  expect(result.some((entry) => entry.startsWith(`LINK_ANCHOR ${path}`))).toBe(false);
-  expect(result).not.toContain(`DOCUMENT_UNREACHABLE ${path}`);
+  expect(result.some((entry) => entry.startsWith(`LINK_ANCHOR ${path}`))).toBe(true);
+  expect(result).toContain(`TASK_DOCUMENT_UNCLASSIFIED ${path}`);
 });
 
-it('checks unused link definitions and does not discover active contracts through historical prose', async () => {
+it('checks unused link definitions and does not discover active contracts through result prose', async () => {
   const root = await fixture({
-    'docs/index.md': '[API](apis/index.md) [Guide](guide.md) [History](tasks/history/old.md)\n',
-    'docs/tasks/history/old.md': '[Then-current contract](../../hidden.md)\n',
+    'docs/index.md':
+      '[API](apis/index.md) [Guide](guide.md) [Result](tasks/example/complete/note.md)\n',
+    'docs/tasks/example/complete/note.md': '[Contract](../../../hidden.md)\n',
     'docs/hidden.md': '# Active contract\n',
     'docs/guide.md': '# Guide\n\n[unused]: ../.work/private.md\n',
   });
@@ -153,8 +154,8 @@ const taskConfig: HarnessConfig = {
 async function taskFixture(extra: Record<string, string> = {}) {
   return fixture({
     'docs/index.md': '[API](apis/index.md) [Guide](guide.md) [Tasks](tasks/index.md)\n',
-    'docs/tasks/index.md': renderIndex({ version: 2, prds: [] }),
-    'docs/tasks/requirements.md': '[Requirement](example/prd.md)\n',
+    'harness.config.json': JSON.stringify(taskConfig),
+    'docs/tasks/index.md': renderIndex({ version: 5, prds: [] }, taskConfig.taskDocuments!),
     'docs/tasks/example/prd.md': '# Requirement\n\n## Old section\n',
     'docs/old-prd.md':
       '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n\n- <a id="old-section"></a>[Old section](../docs/tasks/example/prd.md#old-section)\n',
@@ -190,7 +191,7 @@ it('rejects unknown task pages, lost result entries and discovery through histor
   const root = await taskFixture({
     'docs/tasks/unknown.md': '# Unclassified\n',
     'docs/tasks/index.md': '# Broken result index\n',
-    'docs/tasks/history/old.md': '[Tasks](../requirements.md)\n',
+    'docs/tasks/history/old.md': '# Retired history\n',
     'docs/index.md': '[API](apis/index.md) [Guide](guide.md) [History](tasks/history/old.md)\n',
   });
   expect(await errors(root, taskConfig)).toEqual(
@@ -204,8 +205,9 @@ it('rejects unknown task pages, lost result entries and discovery through histor
 
 it('does not discover active requirements or current norms through accepted-result prose', async () => {
   const root = await taskFixture({
-    'docs/index.md': '[API](apis/index.md) [Guide](guide.md) [Result](tasks/complete/note.md)\n',
-    'docs/tasks/complete/note.md': '[Requirements](../requirements.md) [Norm](../../hidden.md)\n',
+    'docs/index.md':
+      '[API](apis/index.md) [Guide](guide.md) [Result](tasks/example/complete/note.md)\n',
+    'docs/tasks/example/complete/note.md': '[Requirements](../prd.md) [Norm](../../../hidden.md)\n',
     'docs/hidden.md': '# Current normative page\n',
   });
   const checked = await errors(root, taskConfig);
@@ -294,4 +296,44 @@ it('offers the real read-only documents CLI without a member directory or an aut
   });
   expect(await readFile(configPath, 'utf8')).toBe(raw);
   await expect(readFile(join(root, '.work/member.json'))).rejects.toHaveProperty('code', 'ENOENT');
+});
+
+it('registers shared pending proposals under their PRD and rejects orphan or misclassified designs', async () => {
+  const proposal = 'docs/tasks/example/pending/choice.md';
+  const root = await taskFixture({ [proposal]: '# Unadopted option\n' });
+  const registry: HarnessConfig = {
+    ...taskConfig,
+    taskDocuments: [
+      ...taskConfig.taskDocuments!,
+      { identity: proposal, path: proposal, kind: 'proposal' },
+    ],
+  };
+  await writeFile(join(root, 'harness.config.json'), JSON.stringify(registry));
+  await writeFile(
+    join(root, 'docs/tasks/index.md'),
+    renderIndex({ version: 5, prds: [] }, registry.taskDocuments!),
+  );
+  expect(await errors(root, registry)).toEqual([]);
+  registry.taskDocuments!.at(-1)!.kind = 'design';
+  expect(
+    (await errors(root, registry)).some((error) => error.startsWith('TASK_DOCUMENT_OWNER')),
+  ).toBe(true);
+  const orphan = 'docs/tasks/orphan/design.md';
+  await mkdir(dirname(join(root, orphan)), { recursive: true });
+  await writeFile(join(root, orphan), '# Unowned design\n');
+  registry.taskDocuments!.at(-1)!.path = orphan;
+  registry.taskDocuments!.at(-1)!.identity = orphan;
+  expect(
+    (await errors(root, registry)).some((error) => error.startsWith('TASK_DOCUMENT_OWNER')),
+  ).toBe(true);
+});
+
+it('requires an independently named PRD directory with prd.md as its registered current path', async () => {
+  const wrong = 'docs/tasks/example/another-prd.md';
+  const root = await taskFixture({ [wrong]: '# Invalid second PRD\n' });
+  const checked = await errors(root, {
+    ...taskConfig,
+    taskDocuments: [...taskConfig.taskDocuments!, { identity: wrong, path: wrong, kind: 'prd' }],
+  });
+  expect(checked.some((error) => error.startsWith('TASK_DOCUMENT_LOCATION'))).toBe(true);
 });

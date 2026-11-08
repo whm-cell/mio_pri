@@ -1,345 +1,88 @@
-import { readFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 import { format } from 'prettier';
+import { beneath } from '../inventory.ts';
+import type { TaskDocument } from '../inventory.ts';
+import { documentCatalog, resolvePrd, resolveDocument, resultDocument } from '../task-documents.ts';
+import { checkedPath, digest, json } from './records.ts';
+import type { Evidence, Task } from './records.ts';
+import { fields, hashField, metadata, optionalText, record, textField } from './report-format.ts';
 import {
-  checkedPath,
-  digest,
-  draft,
-  identifier,
-  json,
-  methods,
-  parseTask,
-  resultBookPath,
-} from './records.ts';
-import type { Checkpoint, Task, TaskPlan } from './records.ts';
-import {
-  hashField,
-  legacyFiles,
-  metadata,
-  optionalText,
-  record,
-  textArray,
-  textField,
-} from './legacy-reports.ts';
-import type { SharedEvidence } from './legacy-reports.ts';
-import { documentCatalog, resolveDocument, resolvePrd, resultDocument } from '../task-documents.ts';
-import {
-  compactInput,
-  evidenceSelector,
   hasResultSelector,
-  parseCompactReference,
+  parseDetails,
   parseRecords,
   parseSelector,
   recordsPath,
+  reportPath,
   resultSelector,
 } from './compact-store.ts';
-import type { CompactRecords } from './compact-store.ts';
-import { beneath } from '../inventory.ts';
+import type { ResultBook, ResultDetails } from './compact-store.ts';
 
-export { hashField, metadata, optionalText, record, textField } from './legacy-reports.ts';
-export type { SharedEvidence } from './legacy-reports.ts';
+export { hashField, metadata, optionalText, record, textField } from './report-format.ts';
+export type { PublicResult, ResultBook } from './compact-store.ts';
+export { reportPath } from './compact-store.ts';
 export const indexPath = 'docs/tasks/index.md';
-export const reportPath = resultBookPath;
-const reportRoot = (prd: string) => dirname(reportPath(prd));
-export const evidenceRoot = (result: NonNullable<TaskPlan['result']>) =>
-  `${reportRoot(result.prd)}/evidence/${identifier(result.key)}`;
-export const resultPath = (result: NonNullable<TaskPlan['result']>) =>
-  `${reportRoot(result.prd)}/results/${identifier(result.key)}.md`;
-
-/** The book is navigation; sibling results' actual evidence remains an ordinary input. */
-export function deliveryOutput(task: Task, path: string) {
-  if (task.delivery?.version === 1)
-    return (
-      path === indexPath ||
-      path.startsWith(`docs/tasks/complete/${task.plan.id}/`) ||
-      path.startsWith(`docs/tasks/pending/${task.plan.id}/`)
-    );
-  const target = task.plan.result;
-  if (target && hasResultSelector(path)) {
-    const selector = parseSelector(path);
-    return selector.path === recordsPath(target.prd) && selector.key === target.key;
-  }
-  return (
-    !!target &&
-    (path === indexPath ||
-      path === reportPath(target.prd) ||
-      path === resultPath(target) ||
-      path.startsWith(`${evidenceRoot(target)}/`))
-  );
-}
-export interface PublicResult {
-  key: string;
-  title: string;
-  modules: string[];
-  outcomes: string;
-  decisions: string;
-  limitations: string;
-  version: Omit<Checkpoint, 'branch'>;
-  criteria: TaskPlan['acceptance'];
-  evidence: SharedEvidence[];
-  acceptance?: { candidate: string; statement: string; reference: string };
-}
-export interface ResultBook {
-  version: 2 | 3 | 4;
-  prd: string;
-  results: PublicResult[];
-}
-interface ResultNavigation {
-  version: 3;
-  prd: string;
-  results: { key: string; title: string; path: string; sha256: string }[];
-}
+type Catalog = Awaited<ReturnType<typeof documentCatalog>>;
 export interface TaskIndex {
-  version: 2;
+  version: 5;
   prds: { prd: string; report: { path: string; sha256: string } }[];
-  history?: { path: string; sha256: string };
 }
 export interface ResultDraft {
-  version: 2;
+  version: 5;
   prd: string;
-  result: PublicResult;
-}
-function fields(obj: object, allowed: string[]) {
-  if (Object.keys(obj).some((key) => !allowed.includes(key)))
-    throw new Error('WORK_REPORT_FORMAT: unsupported field');
+  candidate: string;
+  result: ResultDetails;
+  evidence: Evidence[];
 }
 
-function parseResult(
-  value: unknown,
-  prd: string,
-  accepted: boolean,
-  compact: boolean | 'either' = false,
-): PublicResult {
-  const result = record(value) as unknown as PublicResult;
-  fields(result, [
-    'key',
-    'title',
-    'modules',
-    'outcomes',
-    'decisions',
-    'limitations',
-    'version',
-    'criteria',
-    'evidence',
-    'acceptance',
-  ]);
-  identifier(textField(result.key));
-  for (const key of ['title', 'outcomes', 'decisions', 'limitations'] as const)
-    textField(result[key]);
-  textArray(result.modules);
-  const version = record(result.version);
-  fields(version, ['candidate', 'head', 'files', 'contract']);
-  const task = draft('', '', 'public-result', '');
-  task.plan.result = { prd, key: result.key };
-  task.plan.acceptance = result.criteria;
-  task.checkpoint = { ...result.version, branch: null };
-  parseTask(json(task));
-  if (compact === true)
-    for (const path of Object.keys(result.version.files)) {
-      if (hasResultSelector(path) && parseSelector(path).criterion !== undefined)
-        throw new Error('WORK_REPORT_SELECTOR: manifest inputs select a complete result key');
-    }
-  if (!result.criteria.length) throw new Error('WORK_REPORT_FORMAT: criteria required');
-  for (const criterion of result.criteria) {
-    identifier(criterion.id);
-    if (!methods.includes(criterion.method))
-      throw new Error('WORK_REPORT_FORMAT: criterion method');
-  }
-  if (!Array.isArray(result.evidence) || result.evidence.length !== result.criteria.length)
-    throw new Error('WORK_REPORT_FORMAT: one artifact per criterion');
-  const seen = new Set<string>();
-  for (const entry of result.evidence) {
-    fields(record(entry), [
-      'criterion',
-      'method',
-      'representation',
-      'sourceSha256',
-      'path',
-      'sha256',
-      'environment',
-    ]);
-    if (
-      !result.criteria.some(
-        (criterion) => criterion.id === entry.criterion && criterion.method === entry.method,
-      ) ||
-      seen.has(entry.criterion)
-    )
-      throw new Error('WORK_REPORT_FORMAT: evidence criterion');
-    seen.add(entry.criterion);
-    const own = `${evidenceRoot({ prd, key: result.key })}/${entry.criterion}.md`;
-    const legacy =
-      entry.path === own ||
-      /^docs\/tasks\/history\/(?:complete|pending)\/[a-z0-9_-]+\/evidence\/[a-z0-9_-]+\.md$/.test(
-        entry.path,
-      );
-    const embedded = entry.path === evidenceSelector(prd, result.key, entry.criterion);
-    if (!((compact !== true && legacy) || (compact !== false && embedded)))
-      throw new Error('WORK_REPORT_FORMAT: evidence location');
-    if (!['original', 'redacted', 'excerpt'].includes(entry.representation))
-      throw new Error('WORK_REPORT_FORMAT: representation');
-    hashField(entry.sourceSha256);
-    hashField(entry.sha256);
-    textField(entry.environment);
-  }
-  if (accepted || result.acceptance !== undefined) {
-    const acceptance = record(result.acceptance);
-    fields(acceptance, ['candidate', 'statement', 'reference']);
-    if (acceptance.candidate !== result.version.candidate)
-      throw new Error('WORK_REPORT_FORMAT: acceptance candidate mismatch');
-    textField(acceptance.statement);
-    textField(acceptance.reference);
-  }
-  return result;
+export function bookPaths(prd: string, catalog: Catalog) {
+  const identity = resolvePrd(prd, catalog);
+  const { currentPath } = resolveDocument(identity, catalog);
+  return {
+    identity,
+    currentPath,
+    report: reportPath(currentPath),
+    records: recordsPath(currentPath),
+  };
 }
-export function parseBook(source: string): ResultBook {
-  const book = record(metadata(source, 'mio-prd-results'));
-  fields(book, ['version', 'prd', 'results']);
-  if (book.version !== 2 || !Array.isArray(book.results))
-    throw new Error('WORK_REPORT_FORMAT: book version/results');
-  const prd = textField(book.prd);
-  const results = book.results.map((result) => parseResult(result, prd, true));
-  if (new Set(results.map((result) => result.key)).size !== results.length)
-    throw new Error('WORK_REPORT_FORMAT: duplicate result key');
-  return { version: 2, prd, results };
-}
-export function parseNavigation(source: string): ResultNavigation {
-  const value = record(metadata(source, 'mio-prd-results'));
-  fields(value, ['version', 'prd', 'results']);
-  if (value.version !== 3 || !Array.isArray(value.results))
-    throw new Error('WORK_REPORT_FORMAT: navigation version/results');
-  const prd = textField(value.prd);
-  const seen = new Set<string>();
-  for (const item of value.results) {
-    const ref = record(item);
-    fields(ref, ['key', 'title', 'path', 'sha256']);
-    const key = identifier(textField(ref.key));
-    if (seen.has(key)) throw new Error('WORK_REPORT_FORMAT: duplicate result key');
-    seen.add(key);
-    textField(ref.title);
-    hashField(ref.sha256);
-    if (ref.path !== resultPath({ prd, key }))
-      throw new Error('WORK_REPORT_FORMAT: result location');
+
+/** Only the current result is an output; other results remain ordinary candidate inputs. */
+export function deliveryOutput(task: Task, path: string, catalog: Catalog) {
+  const target = task.plan.result;
+  if (!target) return false;
+  const paths = bookPaths(target.prd, catalog);
+  if (hasResultSelector(path)) {
+    const selector = parseSelector(path);
+    return selector.path === paths.records && selector.key === target.key;
   }
-  return value as unknown as ResultNavigation;
+  return path === indexPath || path === paths.report;
 }
-export function parseResultPage(source: string) {
-  const value = record(metadata(source, 'mio-prd-result'));
-  fields(value, ['version', 'prd', 'result']);
-  if (value.version !== 3) throw new Error('WORK_REPORT_FORMAT: result page version');
-  const prd = textField(value.prd);
-  return { prd, result: parseResult(value.result, prd, true) };
-}
-/** A reader can target the working tree or Git HEAD without changing result identity. */
-export async function loadBook(source: string, read: (path: string) => Promise<string | null>) {
-  const version = record(metadata(source, 'mio-prd-results')).version;
-  if (version === 4) return loadCompactBook(source, read);
-  if (version === 2) return { book: parseBook(source), details: {} as Record<string, string> };
-  const navigation = parseNavigation(source);
-  const details: Record<string, string> = {};
-  const results: PublicResult[] = [];
-  for (const ref of navigation.results) {
-    const bytes = await read(ref.path);
-    if (bytes === null || digest(bytes) !== ref.sha256)
-      throw new Error(`WORK_REPORT_RESULT: ${ref.path}`);
-    const page = parseResultPage(bytes);
-    if (
-      page.prd !== navigation.prd ||
-      page.result.key !== ref.key ||
-      page.result.title !== ref.title
-    )
-      throw new Error('WORK_REPORT_BINDING: result/navigation mismatch');
-    if (!(await sameMarkdown(bytes, renderResultPage(page.prd, page.result))))
-      throw new Error(`WORK_REPORT_INTEGRITY: result content ${ref.path}`);
-    details[ref.path] = bytes;
-    results.push(page.result);
-  }
-  const book: ResultBook = { version: 3, prd: navigation.prd, results };
-  if (!(await sameMarkdown(source, renderBook(book, details))))
-    throw new Error('WORK_REPORT_INTEGRITY: navigation content differs from its entries');
-  return { book, details };
-}
+
 async function sameMarkdown(actual: string, expected: string) {
   const options = { parser: 'markdown', printWidth: 100 };
-  const texts = await Promise.all([format(actual, options), format(expected, options)]);
-  return texts[0] === texts[1];
+  const [left, right] = await Promise.all([format(actual, options), format(expected, options)]);
+  return left === right;
 }
 
-async function readRecords(read: (path: string) => Promise<string | null>, path: string) {
-  const source = await read(path);
-  if (source === null) throw new Error(`WORK_REPORT_EVIDENCE: ${path}`);
-  const records = parseRecords(source, (value, prd) => parseResult(value, prd, true, true));
-  if (path !== recordsPath(records.prd))
-    throw new Error('WORK_REPORT_BINDING: records/PRD mismatch');
-  return records;
+export async function validateLocations(root: string, result: ResultDetails, catalog: Catalog) {
+  const allowed = [...Object.keys(catalog.config.sourceRoots), ...catalog.config.documentRoots];
+  for (const { path } of result.locations) {
+    if (
+      !allowed.some((base) => beneath(path, base)) ||
+      [...catalog.config.privateRoots, ...catalog.config.generatedRoots].some((base) =>
+        beneath(path, base),
+      ) ||
+      !(await stat(await checkedPath(root, path))).isFile()
+    )
+      throw new Error(`WORK_REPORT_LOCATION: expected a public source or document file: ${path}`);
+  }
 }
 
-async function loadCompactBook(source: string, read: (path: string) => Promise<string | null>) {
-  const ref = parseCompactReference(metadata(source, 'mio-prd-results'));
-  const bytes = await read(ref.records.path);
-  if (bytes === null || digest(bytes) !== ref.records.sha256)
-    throw new Error(`WORK_REPORT_EVIDENCE: ${ref.records.path}`);
-  const records = await readRecords(async () => bytes, ref.records.path);
-  if (records.prd !== ref.prd) throw new Error('WORK_REPORT_BINDING: report/records mismatch');
-  const book: ResultBook = {
-    version: 4,
-    prd: records.prd,
-    results: records.results.map((entry) => entry.result),
-  };
-  if (!(await sameMarkdown(source, renderCompactBook(records, bytes))))
-    throw new Error('WORK_REPORT_INTEGRITY: report content differs from records');
-  return { book, details: { [ref.records.path]: bytes } };
-}
-
-async function checkedRecords(root: string, path: string) {
-  const catalog = await documentCatalog(root);
-  if (
-    [...catalog.config.privateRoots, ...catalog.config.generatedRoots].some((base) =>
-      beneath(path, base),
-    ) ||
-    !catalog.config.documentRoots.some((base) => beneath(path, base))
-  )
-    throw new Error(`WORK_PRIVATE: ${path}`);
-  const records = await readRecords((file) => optionalText(root, file), path);
-  if (resolvePrd(records.prd, catalog) !== records.prd)
-    throw new Error('WORK_REPORT_BINDING: records PRD must remain a registry identity');
-  return records;
-}
-
-/** Bind a precise accepted key; sibling additions do not change its manifest identity. */
-export async function readResultInput(root: string, path: string) {
-  if (!hasResultSelector(path)) return optionalText(root, path);
-  const selector = parseSelector(path);
-  if (selector.criterion !== undefined)
-    throw new Error('WORK_REPORT_SELECTOR: inputs select a complete result key');
-  return compactInput(await checkedRecords(root, selector.path), selector);
-}
-
-/** A broad scope retains every sibling as an actual input while excluding only its own result. */
-export async function compactInputs(root: string, path: string, task: Task) {
-  const records = await checkedRecords(root, path);
-  return Object.fromEntries(
-    records.results
-      .filter(
-        (entry) =>
-          !(records.prd === task.plan.result?.prd && entry.result.key === task.plan.result.key),
-      )
-      .map((entry) => [resultSelector(records.prd, entry.result.key), digest(json(entry))]),
-  );
-}
-export function parseDraft(source: string): ResultDraft {
-  const value = record(metadata(source, 'mio-result-draft'));
-  fields(value, ['version', 'prd', 'result']);
-  if (value.version !== 2) throw new Error('WORK_REPORT_FORMAT: draft version');
-  const prd = textField(value.prd);
-  const result = parseResult(value.result, prd, false, 'either');
-  if (result.acceptance) throw new Error('WORK_REPORT_FORMAT: draft cannot contain acceptance');
-  return { version: 2, prd, result };
-}
 export function parseIndex(source: string): TaskIndex {
   const index = record(metadata(source, 'mio-prd-index'));
-  fields(index, ['version', 'prds', 'history']);
-  if (index.version !== 2 || !Array.isArray(index.prds))
-    throw new Error('WORK_REPORT_FORMAT: index version/prds');
+  fields(index, ['version', 'prds']);
+  if (index.version !== 5 || !Array.isArray(index.prds))
+    throw new Error('WORK_REPORT_FORMAT: only public v5 index is supported');
   const seen = new Set<string>();
   for (const value of index.prds) {
     const entry = record(value);
@@ -349,119 +92,141 @@ export function parseIndex(source: string): TaskIndex {
     seen.add(prd);
     const ref = record(entry.report);
     fields(ref, ['path', 'sha256']);
-    if (ref.path !== reportPath(prd)) throw new Error('WORK_REPORT_FORMAT: book location');
+    textField(ref.path);
     hashField(ref.sha256);
-  }
-  if (index.history !== undefined) {
-    const history = record(index.history);
-    fields(history, ['path', 'sha256']);
-    if (history.path !== 'docs/tasks/history/index.md')
-      throw new Error('WORK_REPORT_FORMAT: history location');
-    hashField(history.sha256);
   }
   return index as unknown as TaskIndex;
 }
+
 export async function readIndex(root: string) {
+  const catalog = await documentCatalog(root);
   const source = await optionalText(root, indexPath);
-  const index = source === null ? { version: 2 as const, prds: [] } : parseIndex(source);
-  if (source !== null) {
-    const options = { parser: 'markdown', printWidth: 100 };
-    const [actual, expected, legacy] = await Promise.all([
-      format(source, options),
-      format(renderIndex(index), options),
-      format(indexMarkdown(index, false), options),
-    ]);
-    if (actual !== expected && actual !== legacy)
-      throw new Error('WORK_REPORT_INTEGRITY: index content differs from its entries');
+  const index: TaskIndex = source === null ? { version: 5, prds: [] } : parseIndex(source);
+  for (const entry of index.prds) {
+    const paths = bookPaths(entry.prd, catalog);
+    if (entry.prd !== paths.identity || entry.report.path !== paths.report)
+      throw new Error('WORK_REPORT_BINDING: index PRD/location mismatch');
   }
+  if (source !== null && !(await sameMarkdown(source, renderIndex(index, catalog.documents))))
+    throw new Error('WORK_REPORT_INTEGRITY: index content differs from registry/results');
   return { source, index };
 }
+
 export async function readBook(root: string, prd: string, index: TaskIndex) {
   const catalog = await documentCatalog(root);
-  for (const entry of index.prds)
-    if (resolveDocument(entry.prd, catalog).identity !== entry.prd)
-      throw new Error('WORK_REPORT_BINDING: accepted PRD must remain a registry identity');
-  prd = resolveDocument(prd, catalog).identity;
-  const source = await optionalText(root, reportPath(prd));
-  const ref = index.prds.find((entry) => entry.prd === prd)?.report;
+  const paths = bookPaths(prd, catalog);
+  const source = await optionalText(root, paths.report);
+  const ref = index.prds.find((entry) => entry.prd === paths.identity)?.report;
+  const recordsSource = await optionalText(root, paths.records);
+  if (source === null && ref === undefined && recordsSource === null)
+    return {
+      book: { version: 5 as const, prd: paths.identity, results: [] },
+      source,
+      recordsSource,
+    };
+  if (source === null || !ref || ref.path !== paths.report || digest(source) !== ref.sha256)
+    throw new Error('WORK_REPORT_INTEGRITY: report/index mismatch');
+  const navigation = record(metadata(source, 'mio-prd-results'));
+  fields(navigation, ['version', 'prd', 'records']);
+  if (navigation.version !== 5)
+    throw new Error('WORK_REPORT_FORMAT: only public v5 report is supported');
+  const records = record(navigation.records);
+  fields(records, ['path', 'sha256']);
   if (
-    (source === null) !== (ref === undefined) ||
-    (source !== null && digest(source) !== ref?.sha256)
+    navigation.prd !== paths.identity ||
+    records.path !== paths.records ||
+    recordsSource === null ||
+    digest(recordsSource) !== hashField(records.sha256)
   )
-    throw new Error('WORK_DELIVERY_CONFLICT: book/index mismatch');
-  const { book, details } =
-    source === null
-      ? { book: { version: 4 as const, prd, results: [] }, details: {} as Record<string, string> }
-      : await loadBook(source, (path) => optionalText(root, path));
-  if (book.prd !== prd) throw new Error('WORK_REPORT_BINDING: PRD mismatch');
-  if (book.version !== 4) for (const result of book.results) await resultFiles(root, result);
-  return { book, source, details };
-}
-export async function resultFiles(
-  root: string,
-  result: PublicResult,
-  read = (path: string) => optionalText(root, path),
-) {
-  const files: Record<string, string> = {};
-  const first = result.evidence[0];
-  const records = first?.path.includes('#')
-    ? await readRecords(read, parseSelector(first.path).path)
-    : null;
-  for (const entry of result.evidence) {
-    const bytes = records
-      ? compactInput(records, parseSelector(entry.path))
-      : await read(entry.path);
-    if (bytes === null || digest(bytes) !== entry.sha256)
-      throw new Error(`WORK_REPORT_EVIDENCE: ${entry.path}`);
-    files[entry.path] = bytes;
-  }
-  return files;
+    throw new Error('WORK_REPORT_INTEGRITY: report/records mismatch');
+  const book = parseRecords(recordsSource);
+  if (book.prd !== paths.identity) throw new Error('WORK_REPORT_BINDING: records PRD mismatch');
+  if (!(await sameMarkdown(source, renderBook(book, paths.currentPath, recordsSource))))
+    throw new Error('WORK_REPORT_INTEGRITY: report content differs from records');
+  return { book, source, recordsSource };
 }
 
-/** Private preparation never publishes progress or transfers acceptance. */
+// Input reading deliberately does not require the generated report/index: a journal may be
+// between their writes. The records themselves must still have valid ownership and accepted entries.
+async function checkedRecords(root: string, path: string) {
+  const source = await optionalText(root, path);
+  if (source === null) throw new Error(`WORK_INPUT_MISSING: ${path}`);
+  const book = parseRecords(source);
+  const paths = bookPaths(book.prd, await documentCatalog(root));
+  if (paths.identity !== book.prd || paths.records !== path)
+    throw new Error('WORK_REPORT_BINDING: records/PRD mismatch');
+  return { book, paths };
+}
+
+export async function readResultInput(root: string, path: string) {
+  if (!hasResultSelector(path)) return optionalText(root, path);
+  const selector = parseSelector(path);
+  const { book } = await checkedRecords(root, selector.path);
+  const result = book.results.find((entry) => entry.key === selector.key);
+  if (!result) throw new Error(`WORK_INPUT_MISSING: ${path}`);
+  return json(result);
+}
+
+export async function compactInputs(root: string, path: string, task: Task) {
+  const { book, paths } = await checkedRecords(root, path);
+  return Object.fromEntries(
+    book.results
+      .filter(
+        (entry) => !(book.prd === task.plan.result?.prd && entry.key === task.plan.result.key),
+      )
+      .map((entry) => [resultSelector(paths.currentPath, entry.key), digest(json(entry))]),
+  );
+}
+
+export function matchingEvidence(task: Task, candidate: string) {
+  return task.plan.acceptance.map((criterion) => {
+    const entry = task.evidence
+      .filter(
+        (item) =>
+          item.criterion === criterion.id &&
+          item.method === criterion.method &&
+          item.candidate === candidate,
+      )
+      .at(-1);
+    if (!entry || entry.result !== 'pass')
+      throw new Error(`WORK_DELIVERY_EVIDENCE: ${criterion.id}`);
+    return entry;
+  });
+}
+
+export function parseDraft(source: string): ResultDraft {
+  const value = record(metadata(source, 'mio-result-draft'));
+  if (value.version !== 5 || !Array.isArray(value.evidence))
+    throw new Error('WORK_DELIVERY_OBSOLETE: prepare a new v5 draft');
+  fields(value, ['version', 'prd', 'candidate', 'result', 'evidence']);
+  return {
+    version: 5,
+    prd: textField(value.prd),
+    candidate: hashField(value.candidate),
+    result: parseDetails(value.result),
+    evidence: value.evidence as Evidence[],
+  };
+}
+
 export async function readDraft(root: string, task: Task, candidate: string) {
   const ref = task.delivery?.draft;
   if (task.delivery?.version !== 2 || !ref || ref.candidate !== candidate)
     throw new Error('WORK_DELIVERY_STALE: prepare the current result draft');
-  const source = await readFile(await checkedPath(root, ref.path), 'utf8');
-  if (digest(source) !== ref.sha256) throw new Error('WORK_DELIVERY_STALE: draft bytes changed');
+  const source = await optionalText(root, ref.path);
+  if (source === null || digest(source) !== ref.sha256)
+    throw new Error('WORK_DELIVERY_STALE: draft bytes changed');
   const draft = parseDraft(source);
   if (
     draft.prd !== task.plan.result?.prd ||
     draft.result.key !== task.plan.result.key ||
-    draft.result.version.candidate !== candidate
+    draft.candidate !== candidate ||
+    json(draft.evidence) !== json(matchingEvidence(task, candidate)) ||
+    !(await sameMarkdown(source, renderDraft(draft)))
   )
-    throw new Error('WORK_DELIVERY_STALE: draft result/candidate mismatch');
-  const attachments: Record<string, string> = {};
-  for (const entry of draft.result.evidence) {
-    const original = task.evidence
-      .filter(
-        (item) =>
-          item.criterion === entry.criterion &&
-          item.method === entry.method &&
-          item.candidate === candidate,
-      )
-      .at(-1);
-    if (
-      !original ||
-      original.result !== 'pass' ||
-      original.sha256 !== entry.sourceSha256 ||
-      original.environment !== entry.environment
-    )
-      throw new Error('WORK_DELIVERY_STALE: evidence changed after draft preparation');
-    const content = await readFile(
-      await checkedPath(
-        root,
-        `.work/tasks/${task.plan.id}/delivery/evidence/${entry.criterion}.md`,
-      ),
-      'utf8',
-    );
-    if (digest(content) !== entry.sha256)
-      throw new Error(`WORK_DELIVERY_EVIDENCE: draft attachment changed ${entry.path}`);
-    attachments[entry.path] = content;
-  }
-  return { draft, attachments };
+    throw new Error('WORK_DELIVERY_STALE: draft result/candidate/evidence mismatch');
+  return draft;
 }
+
 const link = (from: string, to: string) =>
   relative(dirname(from), to)
     .replaceAll('\\', '/')
@@ -473,136 +238,63 @@ const link = (from: string, to: string) =>
       ),
     )
     .join('/');
-const label = (value: string) => value.replace(/[\\[\]`*_<>]/g, '\\$&');
-const cell = (value: string) => value.replaceAll('|', '\\|').replace(/\s+/g, ' ');
-function indexMarkdown(index: TaskIndex, navigation: boolean): string {
-  index.prds.sort((a, b) => a.prd.localeCompare(b.prd));
-  const rows = index.prds
-    .map(
-      (entry) =>
-        `| [${cell(label(entry.prd))}](${link(indexPath, entry.prd)}) | [已接受成果](${link(indexPath, entry.report.path)}) |`,
-    )
-    .join('\n');
-  const history = index.history
-    ? `\n[历史护栏维护与交付依据](history/index.md)：保留当时的候选、接受和验证范围，不计入 PRD 开发进度。\n`
-    : '';
-  const heading = navigation
-    ? '# 任务资料与成果\n\n[需求、设计与候选](requirements.md)：按当前目标展开相关任务资料。'
-    : '# PRD 成果索引';
-  return `${heading}\n\n每份 PRD 一个公共成果入口，只登记已验证并接受的开发能力。表中入口及成果数量不代表整份 PRD 已完成；当前需求与未完成项回到 PRD。个人进度、待接受草稿和维护收尾留在本人的工作记录。\n\n| PRD | 已接受成果 |\n| --- | --- |\n${rows}\n${history}\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
-}
-export const renderIndex = (index: TaskIndex): string => indexMarkdown(index, true);
-function resultBody(result: PublicResult, path: string, privateDraft = false) {
-  const links = result.evidence
-    .map(
-      (entry) =>
-        `- ${entry.criterion} (${entry.method}, ${entry.representation}): [公开依据](${privateDraft ? `evidence/${entry.criterion}.md` : link(path, entry.path)})`,
-    )
-    .join('\n');
-  return `## ${result.key}\n\n**${result.title}**\n\n${result.outcomes}\n\n必要决定：${result.decisions}\n\n限制：${result.limitations}\n\n受验候选：${result.version.candidate}；Git HEAD：${result.version.head ?? '未提交仓库'}。精确文件摘要与契约摘要见下方版本绑定，不把 HEAD 当作未提交内容的身份。\n\n${links}\n\n接受：${result.acceptance ? `${result.acceptance.statement}\n\n来源：${result.acceptance.reference}` : '待针对本候选的真实结果接受。'}\n`;
-}
-export function renderResultPage(prd: string, result: PublicResult): string {
-  const path = resultPath({ prd, key: result.key });
-  return `# 已接受开发成果详情\n\nPRD：[${label(prd)}](${link(path, prd)})；[成果导航](${link(path, reportPath(prd))}#${result.key})。本页仅表示下面候选的接受范围，不代表当前源码或整份 PRD 完成。\n\n${resultBody(result, path)}\n\`\`\`mio-prd-result\n${json({ version: 3, prd, result })}\`\`\`\n`;
-}
-export function renderBook(book: ResultBook, details: Record<string, string>): string {
-  const navigation: ResultNavigation = {
-    version: 3,
-    prd: book.prd,
-    results: book.results.map((result) => {
-      const path = resultPath({ prd: book.prd, key: result.key });
-      if (details[path] === undefined) throw new Error(`WORK_REPORT_RESULT: ${path}`);
-      return { key: result.key, title: result.title, path, sha256: digest(details[path]!) };
-    }),
-  };
-  const entries = navigation.results
-    .map(
-      (ref) =>
-        `## ${ref.key}\n\n[${label(ref.title)}](${link(reportPath(book.prd), ref.path)})：按需读取结果、受验版本、决定、限制与必要依据。\n`,
-    )
-    .join('\n');
-  return `# 已接受开发成果\n\nPRD：[${label(book.prd)}](${link(reportPath(book.prd), book.prd)})。这里只导航已接受结果，不宣称整份 PRD、当前源码或生产验收完成。每项保留自己的受验版本；新工作不会自动继承旧通过。\n\n${entries}\n\`\`\`mio-prd-results\n${json(navigation)}\`\`\`\n`;
-}
+const label = (value: string) => value.replace(/[\\[\]`*_<>|]/g, '\\$&').replace(/\s+/g, ' ');
 
-/** The readable report is a projection; accepted identities and artifacts live only in records. */
-export function renderCompactBook(records: CompactRecords<PublicResult>, bytes = json(records)) {
-  const path = reportPath(records.prd);
-  const entries = records.results
-    .map(({ result }) => {
-      const evidenceByCriterion = new Map(result.evidence.map((entry) => [entry.criterion, entry]));
-      const criteria = result.criteria
-        .map((criterion) => {
-          const evidence = evidenceByCriterion.get(criterion.id)!;
-          return `- ${criterion.id} (${criterion.method}): ${criterion.criterion}。通过；${evidence.representation}；公开依据 SHA256 ${evidence.sha256}。`;
-        })
-        .join('\n');
-      return `## ${result.key}\n\n**${result.title}**\n\n${result.outcomes}\n\n必要决定：${result.decisions}\n\n限制：${result.limitations}\n\n受验候选：${result.version.candidate}；Git HEAD：${result.version.head ?? '未提交仓库'}。\n\n${criteria}\n\n接受：${result.acceptance!.statement}\n\n来源：${result.acceptance!.reference}\n`;
+export function renderIndex(index: TaskIndex, documents: TaskDocument[]) {
+  const rows = documents
+    .filter((entry) => entry.kind === 'prd')
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map((prd) => {
+      const related = documents.filter(
+        (entry) => entry.kind !== 'prd' && beneath(entry.path, dirname(prd.path)),
+      );
+      const sources = [prd, ...related]
+        .map(
+          (entry) =>
+            `[${entry.kind === 'prd' ? '需求' : entry.kind === 'design' ? '设计' : label(entry.path.split('/').at(-1)!)}](${link(indexPath, entry.path)})`,
+        )
+        .join(' · ');
+      const report = index.prds.find((entry) => entry.prd === prd.identity)?.report;
+      return `| ${label(dirname(prd.path).split('/').at(-1)!)} | ${sources} | ${report ? `[已接受成果](${link(indexPath, report.path)})` : '暂无'} |`;
     })
     .join('\n');
-  return `# 已接受开发成果\n\nPRD：[${label(records.prd)}](${link(path, records.prd)})。各成果按 key 阅读；每项仅表示自己的受验候选与接受范围，不代表整份 PRD、当前源码或生产验收完成。完整版本和逐项公开依据保存在同一份[结构化记录](records.json)，新工作不继承旧通过。\n\n${entries}\n\`\`\`mio-prd-results\n${json({ version: 4, prd: records.prd, records: { path: recordsPath(records.prd), sha256: digest(bytes) } })}\`\`\`\n`;
+  return `# 任务资料与成果\n\n按 PRD 目录查找需求、设计与待评审提案。注册身份与位置只在 harness.config.json 的 taskDocuments 维护。本页由注册资料和成果索引生成；成果存在不代表整份 PRD 已完成，个人进度与待接受草稿留在 .work。\n\n| PRD | 任务资料 | 已接受成果 |\n| --- | --- | --- |\n${rows}\n\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
 }
 
-export function compactRecords(
-  book: ResultBook,
-  artifacts: Record<string, string>,
-  previous?: string,
-) {
-  if (previous !== undefined) {
-    const old = parseRecords(previous, (value, prd) => parseResult(value, prd, true, true));
-    artifacts = { ...artifacts };
-    for (const entry of old.results)
-      for (const evidence of entry.result.evidence)
-        artifacts[evidence.path] ??= entry.artifacts[evidence.criterion]!;
-  }
-  const records: CompactRecords<PublicResult> = {
-    version: 4,
-    prd: book.prd,
-    results: book.results.map((result) => ({
-      result,
-      artifacts: Object.fromEntries(
-        result.evidence.map((entry) => {
-          const content = artifacts[entry.path];
-          if (content === undefined) throw new Error(`WORK_REPORT_EVIDENCE: ${entry.path}`);
-          return [entry.criterion, content];
-        }),
-      ),
-    })),
-  };
-  parseRecords(json(records), (value, prd) => parseResult(value, prd, true, true));
-  return records;
-}
-export function renderDraft(draft: ResultDraft): string {
-  return `# 开发成果待接受草稿\n\nPRD：${label(draft.prd)}。本草稿留在个人记录，不能作为已完成结论。\n\n${resultBody(draft.result, reportPath(draft.prd), true)}\n\`\`\`mio-result-draft\n${json(draft)}\`\`\`\n`;
+export function renderBook(book: ResultBook, currentPath: string, bytes = json(book)) {
+  const path = reportPath(currentPath);
+  const entries = book.results
+    .map((result) => {
+      const locations = result.locations
+        .map((location) => `[${label(location.path)}](${link(path, location.path)})`)
+        .join(' · ');
+      return `## ${result.key}\n\n**${label(result.title)}**\n\n${locations}\n`;
+    })
+    .join('\n');
+  return `# 已接受开发成果\n\nPRD：[当前需求](${link(path, currentPath)})。完成范围、接受结论、验证摘要与限制见[成果记录](records.json)，也可用 work read-result 按成果键读取。这里只导航已接受结果，不表示整份 PRD、当前源码或生产验收完成；不保存可恢复代码或详细证据。\n\n${entries}\n\`\`\`mio-prd-results\n${json({ version: 5, prd: book.prd, records: { path: recordsPath(currentPath), sha256: digest(bytes) } })}\`\`\`\n`;
 }
 
-/** Validate public packages without the author's private records or original logs. */
-export async function checkReports(root: string, files: readonly string[]): Promise<string[]> {
+export function renderDraft(draft: ResultDraft) {
+  const result = draft.result;
+  const locations = result.locations.map((entry) => `- ${entry.path}：${entry.purpose}`).join('\n');
+  return `# 开发成果待接受草稿\n\n**${result.title}**\n\n${result.outcomes}\n\n${locations}\n\n验证：${result.verification}\n\n限制：${result.limitations}\n\n候选：${draft.candidate}。待针对本候选的真实结果接受。\n\n\`\`\`mio-result-draft\n${json(draft)}\`\`\`\n`;
+}
+
+export async function checkReports(root: string, files: readonly string[]) {
+  if (!files.some((path) => path === indexPath || resultDocument(path))) return [];
   try {
     const { index, source } = await readIndex(root);
-    const linked = await legacyFiles(root);
-    if (linked.size && !index.history)
-      throw new Error('WORK_REPORT_INTEGRITY: history index is not linked');
-    if (index.history) {
-      const history = await optionalText(root, index.history.path);
-      if (history === null || digest(history) !== index.history.sha256)
-        throw new Error('WORK_REPORT_INTEGRITY: history index');
-    }
-    if (source !== null) linked.add(indexPath);
+    const catalog = await documentCatalog(root);
+    const linked = new Set(source === null ? [] : [indexPath]);
     for (const entry of index.prds) {
-      const { book, details } = await readBook(root, entry.prd, index);
-      const current = resolveDocument(book.prd, await documentCatalog(root)).currentPath;
-      await checkedPath(root, current);
-      if ((await optionalText(root, current)) === null)
-        throw new Error('WORK_REPORT_SOURCE: PRD missing');
-      linked.add(entry.report.path);
-      for (const path of Object.keys(details)) linked.add(path);
-      for (const result of book.results)
-        for (const evidence of result.evidence)
-          if (!evidence.path.includes('#')) linked.add(evidence.path);
+      const { book } = await readBook(root, entry.prd, index);
+      const paths = bookPaths(entry.prd, catalog);
+      linked.add(paths.report);
+      linked.add(paths.records);
+      for (const result of book.results) await validateLocations(root, result, catalog);
     }
-    for (const file of files.filter((path) => path === indexPath || resultDocument(path))) {
-      if (!linked.has(file)) throw new Error(`WORK_REPORT_ORPHAN: ${file}`);
-    }
+    for (const path of files.filter((file) => resultDocument(file)))
+      if (!linked.has(path)) throw new Error(`WORK_REPORT_ORPHAN: ${path}`);
     return [];
   } catch (error) {
     return [error instanceof Error ? error.message : String(error)];

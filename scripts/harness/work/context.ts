@@ -37,7 +37,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         const selector = parseSelector(path);
         await checkedPath(root, selector.path);
         if (kind !== 'input') throw new Error('WORK_REPORT_SELECTOR: use selectors only in inputs');
-        if (deliveryOutput(task, path))
+        if (deliveryOutput(task, path, catalog))
           throw new Error('WORK_DELIVERY_INPUT: own result cannot be an input');
         await readResultInput(root, path);
         selected.add(path);
@@ -54,10 +54,10 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         throw new Error(`WORK_SOURCE: name an existing public Markdown file: ${path}`);
       if (kind === 'source') resolveDocument(path, catalog);
       if (!matches.length && kind !== 'scope') throw new Error(`WORK_INPUT_MISSING: ${path}`);
-      if (deliveryOutput(task, path) && kind === 'source')
+      if (deliveryOutput(task, path, catalog) && kind === 'source')
         throw new Error('WORK_DELIVERY_INPUT: own delivery output cannot be a requirement/source');
       matches.forEach((file) => {
-        if (!deliveryOutput(task, file)) selected.add(file);
+        if (!deliveryOutput(task, file, catalog)) selected.add(file);
       });
       for (const entry of catalog.documents) {
         const paths = [entry.identity, entry.path, ...(entry.aliases ?? [])];
@@ -160,7 +160,7 @@ export async function assess(root: string, task: Task, inspectDelivery = true) {
   const current = await capture(root, task);
   const errors = contractIssues(task);
   if (inspectDelivery && (await deliveryPending(root, task.plan.id)))
-    errors.push('WORK_DELIVERY_PENDING: resume the original delivery/reopen request');
+    errors.push('WORK_DELIVERY_PENDING: resume the original delivery request');
   const qualityRequired = needsQualityReview(task.plan, await loadConfig(root));
   const normsErrors = await normsIssues(
     root,

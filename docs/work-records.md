@@ -58,7 +58,7 @@ plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance
 
 `pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，移动后必须保留该路径的短导航 alias。新请求的 requirement.source 和 result.prd 归一到 identity，新旧 path 因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选同时摘要实际目标、相关 alias 和配置，迁移或目标正文变化须重新核对证据。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
 
-注册的活动资料只能在 `docs/tasks/`，由任务总索引经 `requirements.md` 发现；成果包与导航不是活动正文。启用注册后，新 result.prd 必须是 kind=prd，顶层 tasks 不作为公共资料或成果目录。新 complete 及其未完成重放会核对真实 requirements.md 存在，不自动创建导航；旧索引只按原完整模板兼容读取，额外正文与恢复时的字节冲突照常拒绝。
+注册的活动资料按 PRD 稳定名称归属 `docs/tasks/<名称>/`；总索引直接导航需求、设计与候选。prd 必须是同目录 prd.md，design/proposal 归属该 PRD，pending 仅存注册 proposal。成果位于同目录 complete，另作完整性与孤儿检查。新交付及未完成的新格式重放要求真实任务总索引存在，不自动创建第二份导航。
 
 ```sh
 pnpm work context api-probe resume
@@ -77,7 +77,7 @@ pnpm work guide start --section 'docs/coordination.md#开始任务'
 
 记录字段、数组、核验错误与已登记证据默认有界，省略值给出明确的 `$read` 定位；沿返回 argv 调用 `read` 精确展开当前任务、核验细节或原件。分页使用 `--offset`、`--limit`，续页携带返回的 `--hash`，原件变化则拒绝混读不同版本。长字符串按 Unicode 字符分页，不直接截断 JSON；目录条数受限之外还有结构输出预算。`checkedReady` 表示完整现场核验结论，`ready` 还考虑当前视图是否省略必要授权／阻塞；未展开不能当作已处理。CLI 不另存“已读”状态，Agent 展开引用后结合实际授权和完整核验决定下一步。请求或系统异常若无可重读来源，只给有界诊断并明确完整正文未持久化，不伪造详情入口。
 
-`read-result <prd> [key]` 不需要作者 `.work`：无 key 时分页列成果，有 key 时默认读取 `/summary`；用 `--select /result` 取得版本和验收元数据，或 `--select /artifacts/<criterion>` 读取该项公开证据，继续沿返回页展开。旧、新公共格式使用同一读取入口。完整性校验仍核对实际数据，工具的有界输出不能阻止显式子命令或宿主直接读取任意全文。
+`read-result <prd> [key]` 不需要作者 `.work`：无 key 时分页列成果，有 key 时默认读取 /summary，--select /result 读取完整简洁记录。只支持公共 v5；不存在 artifacts 或逐证据读取入口。输出仍有界，工具不能阻止宿主直接全文读文件。
 
 事实变化时，Agent 用 `pnpm work update api-probe --stdin` 提交，例如：
 
@@ -98,7 +98,7 @@ check 只读；退出码按完整现场核验决定，缺失契约、依赖未�
 
 sync 只更新检查点，保留历史证据。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
 
-文件摘要覆盖固定公共策略文件和任务声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不默认塞入全部操作手册，旧来源继续兼容。新公共包的精确输入可写为 `docs/tasks/complete/<prd-id>/records.json#result=<key>`，只绑定该成果的接受记录与公开证据；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。运行期间对同一物理包的写入仍会触发 inputStamp 的保守变更检测。
+文件摘要覆盖固定公共策略文件和任务声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不默认塞入全部操作手册，旧来源继续兼容。新公共包的精确输入可写为 `docs/tasks/<名称>/complete/records.json#result=<key>`，只绑定该成果的简洁记录；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。运行期间对同一物理包的写入仍会触发 inputStamp 的保守变更检测。
 
 ## 实施命令
 
@@ -202,36 +202,31 @@ requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 
 
 ## 交付命令
 
-开发成果先用 ensure/update 明确 `plan.norms={"version":2,"paths":["docs/实际规范.md"],"reason":"实际影响与核对理由"}`；维护可单独声明 norms 启用同一审查，无需 result。新 ensure 或显式更新 norms 默认写入 version:2；旧声明不会因读取或更新无关字段而升级。没有规范影响可显式用空 paths，仍须说明理由并登记人工 norms-review。仅当前规范、必要 README/AGENTS 可列入；任务方案、迁移跳转与接受存档不算规范。必要正文在 verify 前更新并纳入候选，prepare/complete 不负责修改或采纳正文。新的 prepare/complete 写入缺 v2 声明或当前原件时拒绝并引导 update；旧已完成／未完成 journal 重放按原契约及原恢复保护，不隐式升级。
+开发成果先用 ensure/update 明确 `plan.result={prd,key}` 和 `plan.norms={version:2,paths,reason}`；prd 必须是注册 PRD 的稳定身份，key 保持稳定。必要规范与实现一并进入候选，当前 norms-review 及其他必需原件必须通过。维护只声明适用 norms，不设 result，不执行公共交付。
 
-`pnpm work deliver <task> --stdin` 只用于明确的 PRD 开发成果，由 Agent 执行。建档或带 revision 的 update 中设置 `plan.result={"prd":"实际公共 PRD.md","key":"稳定成果键"}`；prd 必须是存在的公共 Markdown，key 用与任务 ID 相同的字符规则。Agent 判断它是否对应真实可验收能力，工具不从文件名、scope 或流程标签推断。未设置 result 的维护、检查和演练只保留个人记录，核对后 archive；prepare／complete 均拒绝公共写入。
+v2 私有交付契约与公共 v5 格式含义不同。旧个人状态继续可查看；旧交付草稿和 v1 journal 不再发布或重放。显式新 prepare 校验当前契约后可替换旧 journal，新 journal 未结束时仍阻止其他记录写入。个人文件不批量迁移。
 
-ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 update 设置 result 时升级，保留旧证据和历史说明，撤回个人通过。契约变化后审阅并 sync，再收集新候选证据；不需要首次空 prepare。旧 v1 状态与 handoff 仍可读取，公开旧操作不能重放出新 task 包；未结束的旧操作保留且阻止其他写入，须先核对，不能绕过保护。没有 result 的旧维护任务按 archive 收尾，不批量补证。
+输出排除仅限总索引、本 PRD 报告导航和当前成果键。其他成果、代码与规范仍按真实范围参与候选，不忽略整个 complete 目录。
 
-输出排除仅限公共索引、该 PRD 的汇总导航和本人 key 的附件；自己的输出不能登记为需求来源。同 PRD 其他 key 的附件、其他 PRD、代码与规格照常参与真实 scope／inputs。汇总正文只供导航和成果阅读，实际依赖需登记相应代码、契约或附件，不通过忽略整个结果目录规避候选变化。
-
-所有验收项通过后，准备可读草稿：
+全部验收项通过后，由 Agent 准备草稿：
 
 ```json
 {
   "action": "prepare",
   "revision": "当前 revision",
-  "title": "任务交付标题",
-  "modules": ["实际模块"],
-  "outcomes": "具体完成行为、范围及实现/测试入口",
-  "decisions": "必要决定；没有则明确写无",
-  "limitations": "已知限制；没有则明确写无",
-  "evidence": [
-    { "criterion": "checks", "representation": "excerpt", "text": "最终验收所需的脱敏原件摘录" }
-  ]
+  "title": "实际完成能力",
+  "locations": [{ "path": "src/http.ts", "purpose": "实际入口及职责" }],
+  "outcomes": "实际完成能力和范围",
+  "verification": "实际验证方法、环境与结论的简短摘要",
+  "limitations": "未覆盖范围及重要限制"
 }
 ```
 
-每个验收 ID 选一份与当前候选和方法匹配的最新通过原件。representation 为 original 时读取 UTF-8；redacted／excerpt 必须提供共享文本。来源哈希、环境和表示方式写入必要附件，不公开本机原件路径；脱敏正确性和是否足够审阅仍由执行者判断。prepare 只写本人任务的 `delivery/draft.md` 与 `delivery/evidence/<criterion>.md`，不修改公共文件；草稿证据链接指向这些实际附件。返回新 revision、draft.sha256 和 readyForAcceptance，记录 HOLD_FOR_HUMAN_REVIEW；草稿存在不表示完成。
+prepare 核验每个验收 ID 与当前候选和方法匹配的最新通过原件。locations 必须指向真实公共源码或文档文件。只生成个人 delivery/draft.md，保存可读成果与原件元数据绑定，不复制公开附件。返回 revision、draft.sha256 和 readyForAcceptance，记录 HOLD_FOR_HUMAN_REVIEW；摘要真实性由实际审阅保证，草稿存在不表示接受。
 
-本地用户可审阅该草稿；团队需要评审候选时，从既有 PR 或明确共享渠道取得代码、验证摘要与必要依据，不要求复制作者 `.work`，不默认另建每任务永久 pending 报告，不自动上传。
+本地用户可审阅草稿；跨人评审沿既有共享渠道取得实际需要的代码和原件，不默认生成永久公共 pending 报告或自动上传。
 
-取得真实结果接受后：
+取得针对该结果与候选的真实接受后：
 
 ```json
 {
@@ -240,17 +235,17 @@ ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 upd
   "draftSha256": "已审草稿摘要",
   "acceptance": {
     "candidate": "已接受的受验候选",
-    "statement": "真实接受意见的必要脱敏摘录",
-    "reference": "可核对的接受来源或明确的对话定位"
+    "statement": "真实接受意见",
+    "reference": "可核对的接受来源或对话定位"
   }
 }
 ```
 
-命令核对必需原件、候选、草稿和接受绑定，按稳定 PRD 身份派生 `docs/tasks/complete/<prd-id>/`。没有既有 book 的 PRD 写 v4：一个 `records.json` 保存各 key 的受验版本、接受与逐验收项公开证据，一个 `report.md` 从记录生成可读结果；不按 key 或 criterion 继续增加公开 Markdown。报告与记录互相绑定完整性，报告不是另一个可独立修改的接受来源。旧 v1/v2/v3 继续读取，已有旧 book 的增量保持兼容写法，不在业务交付中迁移兄弟成果。
+complete 再核对必需原件、候选、草稿和接受绑定，从注册 PRD 当前路径确定同目录 complete。v5 records.json 保存 key、title、outcomes、locations、verification、limitations、acceptance；report.md 只生成导航。没有文件清单、详细证据或可恢复源码，候选标识仅关联接受事实。
 
-同 key 更新保留兄弟结果，总索引每 PRD 一条，不表示整份 PRD 完成。新 key 可直接追加；替换已有 key 时，旧结果与必要证据须在当前 HEAD 可恢复，按 key 比较，未提交兄弟不阻塞替换。公共文件遭人工修改时拒绝覆盖，不自动提交或发布；接受文本真实性仍由实际人类意见支持。每项证据的 method、representation、原件哈希、公开内容哈希和环境保留，汇总成一包不将摘录提升为原件。
+同 key 更新只替换本项，保留兄弟结果，不要求旧结果先提交。统一索引也列出尚无成果的注册需求；成果数量不表示整份 PRD 完成。旧公共格式直接拒绝，不提供历史恢复。
 
-中断时原样重试原 v2 prepare／complete 请求，工具依据 journal 恢复；未受干扰的同一请求幂等。修改后的索引、汇总、附件或状态拒绝覆盖，未结束操作阻止其他记录写入。已完成请求也不重写被人恢复的旧字节；后续存在合法更新时读取当前成果，不重放旧快照。reopen 只更新个人状态，不改公共事实。公开格式、链接与完整性单独检查，输出排除不是免检。
+新流程中断可原样重试请求，v2 journal 恢复本次写入；外部改动、陈旧输入和错误归属拒绝覆盖。未结束新操作阻止其他记录写入，已完成请求不重写被人修改的字节。旧 v1 journal 不重放，需显式重新 prepare；重新准备仍要求当前 revision、契约和原件。reopen 只更新个人状态，公共完整性不因输出排除而免检。
 
 ## 发送与接收
 
@@ -263,7 +258,7 @@ pnpm work receive .work/inbox/api-probe.md
 
 handoff 输出本地 `handoff-<内容摘要>.md`。相同内容复用，候选／摘要变化另建草稿，人工修改的已有文件不覆盖。审阅脱敏后沿现有渠道共享，并实际提供固定代码和所需原件；工具不上传、不复制代码、不同步他人的目录。
 
-接收方也可用 `work receive docs/tasks/complete/<prd-id>/report.md <result-key>` 选择一个成果；只有一项时可省略 key。工具核对公开附件，创建本人草稿，并在 notes 列出受验文件清单内当前文件的差异，不宣称发现清单外新增文件。草稿不继承授权、写入范围、checkpoint 或通过原件，须重新定义当前契约。兼容的旧 v1 报告按其实际公共文件接收，不改旧候选。精确代码 handoff 仍要求文件匹配。
+接收方可用 `work receive docs/tasks/<名称>/complete/report.md <result-key>` 选择一项成果，只有一项可省略 key。工具核对公共记录、报告和索引后创建个人草稿，提供目标、成果引用和逻辑入口；不比较历史文件，不继承授权、范围、验收项、checkpoint 或通过原件。旧公共成果不再接收，个人精确代码 handoff 仍要求文件匹配。
 
 接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已分类的公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联与规范声明，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
 
@@ -304,4 +299,4 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 可选 delivery 保存格式版本、私有草稿和最后接受引用。v2 accepted 的 path 指向 PRD 汇总，key 指向成果，sha256 是该成果规范 JSON 摘要，candidate 是其受验候选；兄弟成果变化不改这个绑定。公共索引的 sha256 则核对整份汇总文件，两者用途不同。它不是通用输出排除开关。
 
-公共协议、源码、测试、PRD 已接受成果与必要脱敏依据入库；护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。
+公共协议、源码、测试、PRD 已接受成果摘要入库；护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。

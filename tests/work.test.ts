@@ -530,10 +530,8 @@ it.each(['verify', 'deliver', 'handoff', 'archive'])(
       expect(result.status, result.output).toBe(0);
       const reading = JSON.parse(result.output).reading as { ref: string }[];
       const ref = 'docs/coordination.md#交回与下一步';
-      // Deliver reaches handback through its task-delivery section; other actions link it directly.
-      const selected = reading.some((entry) => entry.ref === ref)
-        ? ref
-        : 'docs/coordination.md#任务交付与重开';
+      expect(reading.some((entry) => entry.ref === ref)).toBe(true);
+      const selected = ref;
       const expanded = invoke(root, [
         'guide',
         action,
@@ -921,6 +919,24 @@ it('rejects corrupt/unknown-version records and damaged handoff data without rep
 
 it('uses the same CLI identity before and after a source move and binds the current document, aliases and registry', async () => {
   const root = await fixture();
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const originalPath = 'docs/tasks/original/prd.md';
+  await mkdir(dirname(join(root, originalPath)), { recursive: true });
+  await writeFile(join(root, originalPath), '# API\n');
+  await writeFile(
+    join(root, requirement.source),
+    '# 资料已迁移\n\n[当前资料](tasks/original/prd.md)\n',
+  );
+  config.taskDocuments = [
+    {
+      identity: requirement.source,
+      kind: 'prd',
+      path: originalPath,
+      aliases: [requirement.source],
+    },
+  ];
+  await writeFile(configPath, JSON.stringify(config));
   const request = {
     ...proposal(),
     plan: { ...proposal().plan, result: { prd: requirement.source, key: 'value' } },
@@ -935,8 +951,7 @@ it('uses the same CLI identity before and after a source move and binds the curr
     join(root, 'docs/api.md'),
     '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
   );
-  const configPath = join(root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  await rm(join(root, originalPath));
   config.taskDocuments = [
     {
       identity: requirement.source,

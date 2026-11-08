@@ -1,7 +1,7 @@
 import { documentCatalog, resolvePrd } from '../task-documents.ts';
 import { readPage } from './output.ts';
 import { readOptions } from './read-options.ts';
-import { readBook, readIndex, resultFiles } from './reports.ts';
+import { readBook, readIndex } from './reports.ts';
 
 /** Public snapshots stay readable without an author's member, state or original log directory. */
 export async function readPublicResult(root: string, args: string[]) {
@@ -17,7 +17,7 @@ export async function readPublicResult(root: string, args: string[]) {
     const results = book.results.map((result) => ({
       key: result.key,
       title: result.title,
-      candidate: result.version.candidate,
+      candidate: result.acceptance.candidate,
       read: ['read-result', positionals[0]!, result.key],
     }));
     return readPage(
@@ -28,22 +28,18 @@ export async function readPublicResult(root: string, args: string[]) {
   }
   const result = book.results.find((entry) => entry.key === key);
   if (!result) throw new Error('WORK_READ_RESULT: result key not found');
-  const files = await resultFiles(root, result);
-  const artifacts = Object.fromEntries(
-    result.evidence.map((entry) => [entry.criterion, files[entry.path]!]),
-  );
   const summary = {
     key: result.key,
     title: result.title,
-    candidate: result.version.candidate,
+    candidate: result.acceptance.candidate,
     acceptance: result.acceptance,
     outcomes: result.outcomes,
     limitations: result.limitations,
-    decisions: result.decisions,
+    locations: result.locations,
+    verification: result.verification,
   };
-  return readPage(
-    { summary, result, artifacts },
-    { ...options, select: options.select || '/summary' },
-    [...command, key],
-  );
+  return readPage({ summary, result }, { ...options, select: options.select || '/summary' }, [
+    ...command,
+    key,
+  ]);
 }

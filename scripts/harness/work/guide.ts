@@ -35,6 +35,7 @@ const sections: Record<string, [string, string][]> = {
   ],
   deliver: [
     ['docs/coordination.md', '任务交付与重开'],
+    ['docs/coordination.md', '交回与下一步'],
     ['docs/work-records.md', '交付命令'],
   ],
 };

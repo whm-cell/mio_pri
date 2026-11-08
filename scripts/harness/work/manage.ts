@@ -212,7 +212,13 @@ export async function updateTask(root: string, id: string, raw: string) {
       throw new Error('WORK_REQUEST: update cannot record release or human acceptance');
     if (request.stage === 'C1_IMPLEMENTATION') {
       const assessment = await assess(root, task, { reconciling: true });
-      if (!assessment.ready) throw new Error(assessment.errors.join('\n'));
+      if (!assessment.ready)
+        throw new Error(
+          [
+            'Setting C1_IMPLEMENTATION was rejected before saving any task changes; sync cannot apply rejected changes. Read the current context. If changing the intended contract, save it without stage, then inspect/sync before retrying C1 with the current revision.',
+            ...assessment.errors,
+          ].join('\n'),
+        );
     }
     task.stage = request.stage as string;
   }

@@ -843,6 +843,71 @@ it('rejects stale structured updates, protected fields and invalid contracts wit
   }
 });
 
+it.each([false, true])(
+  'keeps rejected C1 requests unsaved and recovers the intended contract (already implementing: %s)',
+  async (alreadyImplementing) => {
+    const root = await fixture();
+    await ready(root);
+    if (alreadyImplementing) await implementing(root);
+    const saved = await readFile(statePath(root), 'utf8');
+    const original = await state(root);
+    const plan = { goal: 'An authorized revised goal.', nextAction: 'Implement the revised goal.' };
+    const rejected = invoke(root, ['update', 'probe', '--stdin'], {
+      revision: digest(saved),
+      reason: 'Revise the goal while requesting C1.',
+      stage: 'C1_IMPLEMENTATION',
+      plan,
+    });
+    expect(rejected.status).toBe(1);
+    expect(rejected.output).toContain('WORK_CONTEXT_CHANGED');
+    expect(rejected.output).toContain('rejected before saving any task changes');
+    expect(await readFile(statePath(root), 'utf8')).toBe(saved);
+    expect(
+      invoke(root, ['sync', 'probe', 'Inspect the persisted record after rejection.']).status,
+    ).toBe(0);
+    expect((await state(root)).plan.goal).toBe(original.plan.goal);
+    expect((await state(root)).stage).toBe(original.stage);
+    const current = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+    const changed = invoke(root, ['update', 'probe', '--stdin'], {
+      revision: current.revision,
+      reason: 'Save only the intended contract before reconciliation.',
+      plan,
+    });
+    expect(changed.status, changed.output).toBe(0);
+    expect(JSON.parse(changed.output).assessment.checkedReady).toBe(false);
+    expect((await state(root)).plan.goal).toBe(plan.goal);
+    expect(
+      invoke(root, ['sync', 'probe', 'Reconciled the saved goal and actual files.']).status,
+    ).toBe(0);
+    await implementing(root);
+    expect((await state(root)).stage).toBe('C1_IMPLEMENTATION');
+    expect((await state(root)).plan.goal).toBe(plan.goal);
+  },
+);
+
+it('recovers a C1 request rejected for file drift without inventing a contract update', async () => {
+  const root = await fixture();
+  await ready(root);
+  const saved = await readFile(statePath(root), 'utf8');
+  const original = await state(root);
+  await writeFile(join(root, 'src/value.ts'), 'export const value = 2;\n');
+  const rejected = invoke(root, ['update', 'probe', '--stdin'], {
+    revision: digest(saved),
+    reason: 'Request C1 before reconciling an actual file change.',
+    stage: 'C1_IMPLEMENTATION',
+    plan: { nextAction: 'Continue authorized implementation.' },
+  });
+  expect(rejected.status).toBe(1);
+  expect(rejected.output).toContain('WORK_CONTEXT_CHANGED: src/value.ts');
+  expect(await readFile(statePath(root), 'utf8')).toBe(saved);
+  expect(invoke(root, ['sync', 'probe', 'Reviewed the changed source file.']).status).toBe(0);
+  await implementing(root);
+  const final = await state(root);
+  expect(final.stage).toBe('C1_IMPLEMENTATION');
+  expect(final.checkpoint!.contract).toBe(original.checkpoint!.contract);
+  expect(final.checkpoint!.candidate).not.toBe(original.checkpoint!.candidate);
+});
+
 it('invalidates release on structured contract changes while preserving old evidence and requiring sync', async () => {
   const root = await fixture();
   await ready(root);

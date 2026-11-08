@@ -9,13 +9,13 @@
 ## 团队任务协调
 
 - 用户只需说“继续当前任务”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)结合对话、公共 PRD／规格和实际记录定位任务、判断 C0/C1 并推进；仅澄清真正影响下一步的缺口。用户无需指定 Skills、ID、哈希、命令或长提示词；Agent 维护本人 checkout/worktree 中忽略的 `.work/`。
-- Agent 收到新目标先取 `pnpm work guide start`，按返回的章节入口展开当前需要的拆解与生命周期说明，再用 `ensure --stdin` 初始化／复用记录；中断后用分页 `status` 定位原任务，再取 `context <task> resume`。列表中的记录阶段不是当前核验结论；省略的授权、阻塞和验收内容经 `read` 精确展开，不能以摘要替代。事实变化用带 revision 的 `update --stdin` 更新，章节定位和下一步与实际进展保持一致；冲突先按[恢复与同步](docs/coordination.md#恢复与同步)对账。读取方式见[记录索引](docs/work-records.md)，不递归加载 `.work` 或全部历史；仓库命令不依赖个人 Skills。
+- 新目标从 `pnpm work guide start` 按需展开，再用 `ensure --stdin` 建档／复用；续接用分页 `status` 定位原任务，再取 `context <task> resume`。按[核对与同步](docs/work-records.md#核对与同步)展开必要字段、使用当前核验并更新事实；章节和下一步须符合实际，冲突先对账。列表阶段及省略摘要不能替代核验，不递归加载 `.work` 或全部历史；仓库命令不依赖个人 Skills。
 - PRD、任务拆分或开发计划须按[规划交付要求](docs/coordination.md#规划交付要求)说明被规划的本期开发单元及其 C0/C1 安排，并纳入文档验收；文档任务阶段不代表开发就绪或实现已接受。远期安排和小修改按实际需要细化，不预建全部执行记录。
-- Agent 修改任务产物或实施输入前先建档、核对现场并进入 `C1_IMPLEMENTATION`；按[写入方式](docs/coordination.md#实施与协作)选择入口，脚本写文档、格式化等命令型修改同样经 `work exec <task> -- <argv ...>` 启动。仅宿主原生编辑工具沿人工前置核对；取证原件准备见[验证与接受](docs/coordination.md#验证与接受)，CLI 不拦截任意宿主写入。契约、文档、代码或分支变化时先核对影响，再有理由地 `work sync`，不以续接为由覆盖检查点。团队需求、设计草案与跨人交接放团队可访问的来源；个人过程留在 `.work`。每个执行任务只设一个负责产物与记录的任务写入者；代码写入冲突时隔离工作区。
-- 开发成果按 [PRD 成果索引](docs/tasks/index.md) 查找，一份 PRD 一个公共入口。仅明确对应可验收开发能力的任务设置 `plan.result={prd,key}`；证据齐全后 deliver prepare 只生成个人草稿，交回完成范围、逻辑入口、候选、验证与限制。收到针对该结果的真实接受后执行 complete，按稳定成果键更新同一 PRD 汇总，保留其他成果。维护、演练与流程收尾只在本人 `.work`，检查后按需 archive，不要求公共 complete；历史护栏依据与 PRD 进度分开。重开不改旧公共事实，不继承新候选通过，成果数量不表示 PRD 整体完成。
+- 修改任务产物或实施输入前建档、核对现场并进入 `C1_IMPLEMENTATION`；脚本写文档、格式化等命令型修改经 `work exec <task> -- <argv ...>`，原生编辑的前置条件见[实施与协作](docs/coordination.md#实施与协作)，观察原件准备见[验证与接受](docs/coordination.md#验证与接受)。CLI 不拦截任意宿主写入。变化先审阅再有理由地 sync；每个任务只有一个负责产物与记录的写入者，代码冲突时隔离工作区。团队资料放可共享来源，个人过程留在 `.work`。
+- 开发成果从 [PRD 成果索引](docs/tasks/index.md) 进入，按[交付与重开](docs/coordination.md#任务交付与重开)处理：仅可验收开发能力设置 result，证据齐全后 prepare，真实接受后 complete。维护、演练与流程任务只在本人 `.work` 验证并按需 archive，不造业务 result；旧接受和新候选分别核对。
 - 原始证据绑定实际候选，保留失败与未知；交接分别核对代码、记录和必需证据。公共 CI 验证协调工具和公共契约，本地工作检查验证本人的记录；两者不能互相替代。
 - 源码任务在 verify 阶段执行 `quality-review`：审阅算法成本、未使用的公共函数/方法及未复用的已有实现。缺项、缺证或旧候选原件不能交付；审查方法与不适用理由见 [验证协议](docs/coordination.md#验证与接受)，脚本不代替实际审阅。
-- 交回前按[三方对账](docs/coordination.md#交回与下一步)核对需求与方案、现行规范、已接受成果。开发成果及适用的维护用 `plan.norms={version:2,paths,reason}` 登记同一 `norms-review`；无规范影响允许空 paths 并说明理由，维护不造 result。必要正文在 verify 前更新，新证据及交付缺项拒绝；旧接受与原件不自动升级，complete 不自动采纳提案或改写规范。
+- 交回前按[三方对账](docs/coordination.md#交回与下一步)核对需求与方案、现行规范、已接受成果。开发成果及适用的维护声明 norms 并登记 `norms-review`，必要规范正文在 verify 前进入候选；声明与原件格式沿[记录证据](docs/work-records.md#记录证据)，缺项不能交付。
 
 ## 工程边界
 

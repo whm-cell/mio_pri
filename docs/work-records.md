@@ -77,6 +77,8 @@ pnpm work guide start --section 'docs/coordination.md#开始任务'
 
 记录字段、数组、核验错误与已登记证据默认有界，省略值给出明确的 `$read` 定位；沿返回 argv 调用 `read` 精确展开当前任务、核验细节或原件。分页使用 `--offset`、`--limit`，续页携带返回的 `--hash`，原件变化则拒绝混读不同版本。长字符串按 Unicode 字符分页，不直接截断 JSON；目录条数受限之外还有结构输出预算。`checkedReady` 表示完整现场核验结论，`ready` 还考虑当前视图是否省略必要授权／阻塞；未展开不能当作已处理。CLI 不另存“已读”状态，Agent 展开引用后结合实际授权和完整核验决定下一步。请求或系统异常若无可重读来源，只给有界诊断并明确完整正文未持久化，不伪造详情入口。
 
+context、ensure 和成功 update 都返回完整现场核验的有界视图。已核对其中的实际结论、展开必要授权／阻塞／验收，且此后现场未变化时，可直接沿下一动作推进，无需再单独 check。退出码 0、stage、status 或仅 read 任务字段不具备这个含义；update 保存成功也可能返回待 sync 的现场差异。现场还包括原件、授权／依赖与在途操作，不能只看 revision 或 candidate 未变。发现变化或核验缺项时重新核对；命令入口仍执行实时前置与互斥，原生编辑仍遵守[实施与协作](coordination.md#实施与协作)。
+
 `read-result <prd> [key]` 不需要作者 `.work`：无 key 时分页列成果，有 key 时默认读取 /summary，--select /result 读取完整简洁记录。只支持公共 v5；不存在 artifacts 或逐证据读取入口。输出仍有界，工具不能阻止宿主直接全文读文件。
 
 事实变化时，Agent 用 `pnpm work update api-probe --stdin` 提交，例如：
@@ -90,7 +92,7 @@ pnpm work guide start --section 'docs/coordination.md#开始任务'
 }
 ```
 
-update 可改上述 plan 字段和非释放阶段（C1_IMPLEMENTATION／C1_EVIDENCE_PENDING），切换阶段或 reopen 须同时提供非空 plan.nextAction。已有定位可用 `plan.requirement={section:"实际标题"}` 更正，仅接受 section，保留 source/key/ID；更正进入候选，不重绑旧证据。id、member、workspace、checkpoint、evidence、人类接受或释放结论仍不可写。数组按字段整体替换，未提交字段保持原值。过期 revision、未知字段或非法值拒绝保存；冲突时先取新 context 核对，不能机械重试覆盖。stage 进入实施前须已有有效契约和现场核对。reason 记录实际变化或核对理由，不为每次读取写日志。
+update 可改上述 plan 字段和非释放阶段（C1_IMPLEMENTATION／C1_EVIDENCE_PENDING），切换阶段或 reopen 须同时提供非空 plan.nextAction。已有定位可用 `plan.requirement={section:"实际标题"}` 更正，仅接受 section，保留 source/key/ID；更正进入候选，不重绑旧证据。id、member、workspace、checkpoint、evidence、人类接受或释放结论仍不可写。数组按字段整体替换，未提交字段保持原值。过期 revision、未知字段或非法值拒绝保存；冲突时先取新 context 核对，不能机械重试覆盖。请求设置 C1_IMPLEMENTATION 时须已有有效契约和现场核对；此处拒绝则整次更新未保存，sync 不会应用被拒绝的修改。若本次确需改契约，先不带 stage 保存，再审阅、sync 后用当前 revision 设置阶段；只有文件漂移时不补造契约更新。reason 记录实际变化或核对理由，不为每次读取写日志。
 
 每次成功写入都可能改变 revision，不沿用 sync、exec、run 或 evidence 之前的旧 revision。WORK_CONFLICT 不覆盖 Task；工具在该任务的 `conflict.json` 保留一份未解决事实，context/check 报 WORK_RECONCILE，后续写操作在副作用前拒绝。按错误给出的精确路径读回执并对照当前 context；只有当前 revision、非空 reason 的合法 update 成功保存后，才将原冲突纳入现有 notes 并清回执。仅读取、sync 或新成功不清除它；若 update 改了契约，解消后仍需审阅和 sync，不要求先让旧候选通过。
 
@@ -106,7 +108,7 @@ sync 更新检查点，保留历史证据；执行后刷新阶段后继，即使
 
 ## 实施命令
 
-安装依赖、代码生成和其他命令型修改，在 ensure、check、update 进入 `C1_IMPLEMENTATION` 后执行：
+安装依赖、代码生成和其他命令型修改，在建档、当前现场核验通过并经 update 进入 `C1_IMPLEMENTATION` 后执行：
 
 ```sh
 pnpm work exec api-probe -- pnpm add --save-exact package-name@version
@@ -126,7 +128,7 @@ pnpm work exec api-probe -- sh -c 'printf "%s\n" "document text" > docs/example.
 
 会写同一任务的 CLI 操作共用 `.work/tasks/<task>.command.json`，在读取可变记录前独占，直到命令结束和记录落盘后释放；ensure／receive 在得到目标 ID 后纳入。标记放在任务目录旁，首次建档在 state 创建前中断也不会仅因占用而留下伪任务目录。竞争者立即返回 `WORK_BUSY`，不启动子命令或登记原件；context、check、read、status 仍可读，不同任务不共用占用标记。标记记录本次 CLI PID、动作和已启动的子进程 PID，不是阶段、授权或第二份任务状态，不依赖超时或 PID 存活自动接管。
 
-`run`／`exec` 收到 SIGINT／SIGTERM 时转发给其启动的执行进程；Linux/macOS 使用执行进程组，等待直接子进程结束并核对同组进程。中断后即使子进程返回 0，也不得算成功；无法确认结束时返回非成功并保留标记。Windows 中断不能据直接子进程退出证明后代已停，同样保留标记。工具不管理脱离执行组的后台服务，命令应以前台方式结束；不能把 CLI 的取消当作撤销整个宿主任务。
+取消须有实际依据，例如已授权中断、超时／资源预算达到或核实异常；暂时无新输出本身不足，先核对已有日志和进程。`run`／`exec` 收到 SIGINT／SIGTERM 时转发给其启动的执行进程；Linux/macOS 使用执行进程组，等待直接子进程结束并核对同组进程。中断后即使子进程返回 0，也不得算成功；无法确认结束时返回非成功并保留标记。Windows 中断不能据直接子进程退出证明后代已停，同样保留标记。工具不管理脱离执行组的后台服务，命令应以前台方式结束；不能把 CLI 的取消当作撤销整个宿主任务。
 
 硬终止或异常会留下标记。恢复者先读取它，核对原 CLI、执行组及相关进程确已停止，再用 context 和实际 diff／原件对账；首次建档尚无 state 时，从原目标按相同 requirement／ID 恢复，不能虚称已建档。PID 不存在、文件较旧或出现新成功都不足以抹去未知。确认没有在途写入后，可作为本工具的恢复操作仅移除该任务的 `<task>.command.json`，再沿原任务继续；这不是业务写入许可，不能借此修改 state、补造通过或删除失败原件。正常活动命令的标记不得手动移除。
 
@@ -175,7 +177,7 @@ evidence 只用于 review／behavior，登记本任务 evidence 目录的真实�
 ```
 ````
 
-每维 result 为 pass／fail／pending／not_applicable，evidence 必须说明观察或不适用理由。整体结果由三个维度推导，须与 evidence 命令参数相同；候选不匹配、缺维度、空依据和仅有“通过”文本拒绝登记。交付时再次核对原件；原件格式完整不证明语义正确，审查者仍须执行验证协议。
+每维 result 为 pass／fail／pending／not_applicable，evidence 必须说明观察或不适用理由。三维中有 fail 则整体 fail，否则有 pending 则整体 pending，全部为 pass／not_applicable 才整体 pass；须与 evidence 命令参数相同。候选不匹配、缺维度、空依据和仅有“通过”文本拒绝登记。交付时再次核对原件；原件格式完整不证明语义正确，审查者仍须执行验证协议。
 
 ```sh
 pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/evidence/quality-review.md "实际审查进度与限制"
@@ -228,7 +230,7 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 
 requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 中已注册的 prd/design/proposal 实际页，去重后用 currentPath，而非迁移 alias；不能靠原件添加未声明来源。没有任务资料注册的旧仓库／fixture，sources 中除 norms.paths、已知导航和成果存档外的声明页也按来源核对。维护规范章节可同时作为需求来源，其余普通规范和纯导航不重复填写。requirements.assessment 要说明要求及方案关系；无独立设计不需造文件。无规范影响时 documents 为 []，仍核对 reason；无相关接受时 accepted.results 为 []，assessment 写真实理由，不虚构成果。
 
-需求、各规范页和 accepted 的 result 只能是 pass/fail/pending，总体按 fail 优先、其次 pending、全部通过才 pass 推导，并须与 conclusion 及 evidence 命令参数相同。缺三方项、缺来源／规范页、不匹配候选、声明或页面摘要、空观察均拒绝。accepted 中 PRD/key/候选仅检查结构，不认证成果存在或接受真实；实际依赖另用 inputs 绑定，不能把原件当作实时镜像。旧声明和原件读取兼容；新登记必须先显式 update norms 到 v2、核对变化并 sync，旧通过不转移。
+需求、各规范页和 accepted 的 result 只能是 pass/fail/pending，总体按 fail 优先、其次 pending、全部通过才 pass 推导，并须与 conclusion 及 evidence 命令参数相同。缺三方项、缺来源／规范页、不匹配候选、声明或页面摘要、空观察均拒绝。accepted 中 PRD/key/候选仅检查结构，不认证成果存在或接受真实；实际依赖另用 inputs 绑定，不能把原件当作实时镜像。旧声明和原件读取兼容；旧 norms 声明用于新登记前，须显式 update 到 v2、核对变化并 sync，旧通过不转移；已为 v2 的声明无需重复升级。
 
 当前候选每项需要有同方法的最新通过原件；缺失或损坏会影响完成判定。旧释放缺证时先经 update 回到 C1_EVIDENCE_PENDING 并撤回当前接受，再显式补证，授权、依赖与上下文检查仍有效。明确开发成果收到针对候选的真实人类接受后，通过下述 deliver complete 设置接受与释放；维护任务交回适用验证后按需 archive，不生成公共完成包。自动通过不代替真实接受。
 

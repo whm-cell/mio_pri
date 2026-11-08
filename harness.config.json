@@ -33,14 +33,17 @@
     {
       "identity": "docs/prd-ai-drama-foundation.md",
       "kind": "prd",
-      "path": "docs/tasks/ai-drama-foundation/prd.md",
-      "aliases": ["docs/prd-ai-drama-foundation.md"]
+      "path": "docs/tasks/ai-drama-foundation/prd.md"
     },
     {
       "identity": "docs/architecture-ai-drama-foundation.md",
       "kind": "design",
-      "path": "docs/tasks/ai-drama-foundation/design.md",
-      "aliases": ["docs/architecture-ai-drama-foundation.md"]
+      "path": "docs/tasks/ai-drama-foundation/design.md"
+    },
+    {
+      "identity": "docs/tasks/auth-rate-limit-redis/prd.md",
+      "kind": "prd",
+      "path": "docs/tasks/auth-rate-limit-redis/prd.md"
     }
   ]
 }

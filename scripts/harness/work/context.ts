@@ -32,17 +32,18 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     ['input', task.plan.inputs],
     ['scope', task.plan.scope],
   ] as const) {
-    for (const path of paths) {
-      if (hasResultSelector(path)) {
-        const selector = parseSelector(path);
+    for (const reference of paths) {
+      if (hasResultSelector(reference)) {
+        const selector = parseSelector(reference);
         await checkedPath(root, selector.path);
         if (kind !== 'input') throw new Error('WORK_REPORT_SELECTOR: use selectors only in inputs');
-        if (deliveryOutput(task, path, catalog))
+        if (deliveryOutput(task, reference, catalog))
           throw new Error('WORK_DELIVERY_INPUT: own result cannot be an input');
-        await readResultInput(root, path);
-        selected.add(path);
+        await readResultInput(root, reference);
+        selected.add(reference);
         continue;
       }
+      const path = kind === 'source' ? resolveDocument(reference, catalog).currentPath : reference;
       if (path !== '.') await checkedPath(root, path);
       if (
         [...config.privateRoots, ...config.generatedRoots].some((base) => beneath(path, base)) ||
@@ -52,7 +53,6 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       const matches = scan.files.filter((file) => path === '.' || beneath(file, path));
       if (kind === 'source' && (!path.endsWith('.md') || !scan.files.includes(path)))
         throw new Error(`WORK_SOURCE: name an existing public Markdown file: ${path}`);
-      if (kind === 'source') resolveDocument(path, catalog);
       if (!matches.length && kind !== 'scope') throw new Error(`WORK_INPUT_MISSING: ${path}`);
       if (deliveryOutput(task, path, catalog) && kind === 'source')
         throw new Error('WORK_DELIVERY_INPUT: own delivery output cannot be a requirement/source');
@@ -60,9 +60,9 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         if (!deliveryOutput(task, file, catalog)) selected.add(file);
       });
       for (const entry of catalog.documents) {
-        const paths = [entry.identity, entry.path, ...(entry.aliases ?? [])];
-        if (!paths.some((file) => path === '.' || beneath(file, path))) continue;
-        paths.forEach((file) => selected.add(file));
+        const references = [entry.identity, entry.path, ...(entry.aliases ?? [])];
+        if (!references.some((file) => path === '.' || beneath(file, path))) continue;
+        [entry.path, ...(entry.aliases ?? [])].forEach((file) => selected.add(file));
         selected.add('harness.config.json');
       }
     }

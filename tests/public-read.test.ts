@@ -37,7 +37,7 @@ async function fixture() {
     [paths.report]: renderBook(book, paths.currentPath),
   };
   for (const entry of catalog.documents)
-    for (const path of new Set([entry.identity, entry.path, ...(entry.aliases ?? [])]))
+    for (const path of new Set([entry.path, ...(entry.aliases ?? [])]))
       files[path] = await readFile(join(project, path), 'utf8');
   files['docs/tasks/index.md'] = renderIndex(
     {
@@ -76,6 +76,9 @@ it('reads and pages v5 facts without author records, and rejects retired evidenc
   ).toMatchObject({
     entries: expect.arrayContaining([{ key: 'candidate', value: result.acceptance.candidate }]),
   });
+  expect(
+    await readPublicResult(root, [paths.currentPath, result.key, '--select', '/result/acceptance']),
+  ).toEqual(await readPublicResult(root, [prd, result.key, '--select', '/result/acceptance']));
   let args = [
     'read-result',
     prd,

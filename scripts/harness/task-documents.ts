@@ -35,8 +35,6 @@ function documentShape(value: unknown): TaskDocument {
     throw new Error('TASK_DOCUMENT_SCHEMA: identity, kind, path and optional aliases required');
   if (new Set(entry.aliases).size !== (entry.aliases ?? []).length)
     throw new Error(`TASK_DOCUMENT_DUPLICATE: aliases for ${entry.identity}`);
-  if (entry.identity !== entry.path && !entry.aliases?.includes(entry.identity))
-    throw new Error(`TASK_DOCUMENT_IDENTITY: retain ${entry.identity} as an alias`);
   if (
     !beneath(entry.path, 'docs/tasks') ||
     resultDocument(entry.path) ||
@@ -87,13 +85,22 @@ export async function inspectTaskDocuments(root: string, config: HarnessConfig) 
   for (const value of config.taskDocuments ?? []) {
     try {
       const entry = documentShape(value);
-      for (const path of new Set([entry.identity, entry.path, ...(entry.aliases ?? [])])) {
+      const files = new Set([entry.path, ...(entry.aliases ?? [])]);
+      for (const path of new Set([entry.identity, ...files])) {
         if (claimed.has(path)) throw new Error(`TASK_DOCUMENT_DUPLICATE: ${path}`);
         claimed.add(path);
         if (!publicDocument(path, config) || resultDocument(path) || taskNavigation(path))
           throw new Error(`TASK_DOCUMENT_PUBLIC: ${path}`);
-        if (!(await stat(await checkedPath(root, path))).isFile())
-          throw new Error(`TASK_DOCUMENT_FILE: ${path}`);
+        const target = await checkedPath(root, path);
+        // Stable identities remain resolvable after optional navigation pages are retired.
+        const file = await stat(target).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
+        if (files.has(path) && !file?.isFile()) throw new Error(`TASK_DOCUMENT_FILE: ${path}`);
+        if (!files.has(path) && file)
+          throw new Error(
+            `TASK_DOCUMENT_IDENTITY: existing ${path} must be the current path or a declared alias`,
+          );
       }
       if (entry.aliases?.includes(entry.path))
         throw new Error(`TASK_DOCUMENT_DUPLICATE: current path is also an alias ${entry.path}`);

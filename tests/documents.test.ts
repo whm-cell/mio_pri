@@ -187,6 +187,47 @@ it('classifies task documents and keeps compatibility aliases as navigation leav
   );
 });
 
+it('allows a stable identity without a redirect file while requiring real targets and declared aliases', async () => {
+  const root = await taskFixture();
+  const entry = { ...taskConfig.taskDocuments![0]!, aliases: [] };
+  const registry = { ...taskConfig, taskDocuments: [entry] };
+  await rm(join(root, entry.identity));
+  await writeFile(join(root, 'harness.config.json'), JSON.stringify(registry));
+  expect(await errors(root, registry)).toEqual([]);
+  // Retiring a navigation page does not make an ordinary Markdown link to it valid.
+  await writeFile(join(root, entry.path), '# Requirement\n\n[Retired](../../old-prd.md)\n');
+  expect((await errors(root, registry)).some((error) => error.includes('LINK_MISSING'))).toBe(true);
+  await writeFile(join(root, entry.path), '# Requirement\n');
+  expect(
+    (await errors(root, taskConfig)).some((error) => error.includes('TASK_DOCUMENT_INVALID')),
+  ).toBe(true);
+  await rm(join(root, entry.path));
+  expect(
+    (await errors(root, registry)).some((error) => error.includes('TASK_DOCUMENT_INVALID')),
+  ).toBe(true);
+});
+
+it('rejects a stable identity that shadows an existing ordinary document', async () => {
+  const root = await taskFixture();
+  const checked = await errors(root, {
+    ...taskConfig,
+    taskDocuments: [{ ...taskConfig.taskDocuments![0]!, identity: 'docs/guide.md', aliases: [] }],
+  });
+  expect(checked.some((error) => error.includes('TASK_DOCUMENT_IDENTITY'))).toBe(true);
+});
+
+it.each(['../outside.md', '.work/private.md', 'docs/../outside.md', 'docs/.env.secret.md'])(
+  'rejects an unsafe stable identity even when it has no physical file: %s',
+  async (identity) => {
+    const root = await taskFixture();
+    const checked = await errors(root, {
+      ...taskConfig,
+      taskDocuments: [{ ...taskConfig.taskDocuments![0]!, identity, aliases: [] }],
+    });
+    expect(checked.some((error) => error.includes('TASK_DOCUMENT_INVALID'))).toBe(true);
+  },
+);
+
 it('rejects unknown task pages, lost result entries and discovery through historical prose', async () => {
   const root = await taskFixture({
     'docs/tasks/unknown.md': '# Unclassified\n',

@@ -997,6 +997,59 @@ it('uses the same CLI identity before and after a source move and binds the curr
   expect(illegal.output).toContain('WORK_RESULT');
 });
 
+it('resumes the same task after retiring its identity redirect and binds only current physical sources', async () => {
+  const root = await fixture();
+  const configPath = join(root, 'harness.config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const path = 'docs/tasks/example/prd.md';
+  await mkdir(dirname(join(root, path)), { recursive: true });
+  await writeFile(join(root, path), '# API\n');
+  await writeFile(
+    join(root, requirement.source),
+    '# 资料已迁移\n\n[当前资料](tasks/example/prd.md)\n',
+  );
+  config.taskDocuments = [
+    { identity: requirement.source, kind: 'prd', path, aliases: [requirement.source] },
+  ];
+  await writeFile(configPath, JSON.stringify(config));
+  const request = {
+    ...proposal(),
+    plan: { ...proposal().plan, result: { prd: requirement.source, key: 'value' } },
+  };
+  const first = JSON.parse(invoke(root, ['ensure', '--stdin'], request).output);
+  const id = first.task.id as string;
+  expect(run(root, 'console.log("before redirect retirement")', id).status).toBe(0);
+  const before = await readFile(statePath(root, id), 'utf8');
+  await rm(join(root, requirement.source));
+  config.taskDocuments[0].aliases = [];
+  await writeFile(configPath, JSON.stringify(config));
+  const resumed = invoke(root, ['ensure', '--stdin'], {
+    ...request,
+    requirement: { ...requirement, source: path },
+    plan: { ...request.plan, result: { ...request.plan.result, prd: path } },
+  });
+  expect(resumed.status, resumed.output).toBe(0);
+  expect(JSON.parse(resumed.output)).toMatchObject({
+    created: false,
+    task: { id, requirement, result: request.plan.result },
+  });
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(before);
+  const changed = JSON.parse(invoke(root, ['check', id]).output);
+  expect(changed.errors.join(' ')).toContain('WORK_CONTEXT_CHANGED');
+  expect(changed.errors.join(' ')).not.toContain('WORK_SOURCE');
+  expect(
+    invoke(root, ['sync', id, 'Inspected removal of an unused physical redirect.']).status,
+  ).toBe(0);
+  const current = await state(root, id);
+  expect(Object.keys(current.checkpoint!.files)).toContain(path);
+  expect(Object.keys(current.checkpoint!.files)).toContain('harness.config.json');
+  expect(Object.keys(current.checkpoint!.files)).not.toContain(requirement.source);
+  expect(current.evidence).toEqual(JSON.parse(before).evidence);
+  expect(JSON.parse(invoke(root, ['check', id]).output).evidence[0].result).toBe('pending');
+  await writeFile(join(root, path), '# API\n\nChanged current requirement.\n');
+  expect(invoke(root, ['check', id]).output).toContain(path);
+});
+
 it('retrieves classified tasks artifacts and receives an exact-code handoff from a registered task proposal', async () => {
   const sender = await fixture('alice');
   const receiver = await fixture('bob');

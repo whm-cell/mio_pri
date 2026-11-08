@@ -56,7 +56,7 @@ plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance
 
 ## 核对与同步
 
-`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，移动后必须保留该路径的短导航 alias。新请求的 requirement.source 和 result.prd 归一到 identity，新旧 path 因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选同时摘要实际目标、相关 alias 和配置，迁移或目标正文变化须重新核对证据。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
+`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，不要求同名实体文件，实际正文由 path 定位；同名实体若存在，只能是 current path 或已声明且通过校验的 alias，不能遮蔽另一份普通规范。只有需要兼容旧 Markdown 链接时才保留并声明短导航 alias；移除前核对引用，已声明 alias 和当前正文仍必须存在。新请求的 requirement.source 和 result.prd 归一到 identity，来源读取解析到当前正文，稳定标识与当前路径因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选只摘要实际正文、仍声明的 alias 和配置，移除 alias、迁移或目标正文变化须审阅、sync 并重新核对受影响证据。普通文件输入和 Markdown 链接不因注册 identity 就允许悬空。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
 
 注册的活动资料按 PRD 稳定名称归属 `docs/tasks/<名称>/`；总索引直接导航需求、设计与候选。prd 必须是同目录 prd.md，design/proposal 归属该 PRD，pending 仅存注册 proposal。成果位于同目录 complete，另作完整性与孤儿检查。新交付及未完成的新格式重放要求真实任务总索引存在，不自动创建第二份导航。
 

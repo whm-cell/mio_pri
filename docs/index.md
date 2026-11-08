@@ -17,7 +17,7 @@
 
 任务资料按 PRD 的稳定名称归组：`docs/tasks/<名称>/prd.md` 维护需求、安排、验收和未决，必要的独有设计理由放同目录 `design.md`。尚未完成的需求留在 PRD；有独立团队评审用途的提案才放同目录 `pending/`，不创建空目录或逐任务文档套件。现行规范仍按领域维护，任务资料通过链接使用。
 
-`harness.config.json.taskDocuments` 是唯一身份与位置注册。每份 PRD 独占一个目录，design/proposal 必须归属已注册 PRD 目录，pending 中只登记 proposal。identity 保持稳定，path 表示当前位置，必要 aliases 只保留短跳转。`pnpm work documents` 只读核对，不自动迁移。任务总入口 `docs/tasks/index.md` 从注册资料和已接受成果生成，不另设需求导航或进度台账。
+`harness.config.json.taskDocuments` 是唯一身份与位置注册。每份 PRD 独占一个目录，design/proposal 必须归属已注册 PRD 目录，pending 中只登记 proposal。identity 是保持稳定的标识，可沿用历史公共路径而不保留同名文件；path 指向真实正文，导航直接使用该路径。identity 不得占用仍存在的其他规范文件路径。aliases 仅在仍需兼容旧链接时声明真实短跳转页，核对引用后可移除，不为稳定身份永久保留中转页。`pnpm work documents` 只读核对，不自动迁移。任务总入口 `docs/tasks/index.md` 从注册资料和已接受成果生成，不另设需求导航或进度台账。
 
 已接受成果保存在本 PRD 的 `complete/records.json`，`complete/report.md` 只生成简短导航。公共 v5 记录保存成果键、名称、完成范围、实现/契约入口、验证摘要、限制及接受来源；候选标识仅关联接受事实，不提供代码复原。文件清单、详细证据和开发快照不复制进公共成果。成果数量不表示整份 PRD 完成，PRD、设计和规范不随完成状态搬家。
 

@@ -7,6 +7,7 @@
 - [任务需求、设计与候选](docs/tasks/index.md)
 - [HTTP API](docs/api.md)
 - [账号注册、登录与会话配置](docs/auth.md)
+- [基础设施与外部集成契约](docs/integrations/index.md)
 - [验收标准与入口](docs/acceptance.md)
 - [PRD 成果索引](docs/tasks/index.md)
 - [开发入口](AGENTS.md)
@@ -16,7 +17,7 @@
 
 使用 Node 24.22.2（DSH 最低要求 24.9）及 pnpm 11.6.0。版本固定在 package.json 和锁文件；公共安装、构建和 CI 不需要相邻源码仓库、全局 Skills 或成员的个人记录。
 
-认证集成测试还需要 PostgreSQL：本机 PATH 可用 `initdb`/`pg_ctl` 时测试创建隔离临时集群；否则显式设置专用 `MIO_TEST_DATABASE_URL`，库名以 `_test` 结尾。认证运行配置、迁移和测试清理边界见 [认证底座](docs/auth.md)。
+认证集成测试还需要隔离的 PostgreSQL 环境，本机临时集群或显式测试数据库的选择及清理要求见 [PostgreSQL 验证入口](docs/integrations/postgres.md#验证入口与变更影响)。认证运行配置和迁移见[认证底座](docs/auth.md)。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts

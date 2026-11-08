@@ -2,7 +2,7 @@
 
 项目负责人已确认：Mio 自建邮箱/密码登录，允许自助注册，首期注册即可登录；邮箱验证后续接入。当前按个人项目使用设计，用户具有稳定 userId，团队和多租户不在本切片建设。
 
-实现采用 Better Auth 1.7.18、pg 8.23.1 与 PostgreSQL，复用库的密码派生、签名 cookie、会话过期和撤销，不自行设计密码学或 JWT。认证表由固定版本的库模型定义；升级须审阅迁移和公开接口并重跑真实 DB、DSH 与打包产物验证。
+实现采用 Better Auth 1.7.18 与 PostgreSQL，驱动版本和数据库公共约束见 [PostgreSQL 使用契约](integrations/postgres.md)。复用库的密码派生、签名 cookie、会话过期和撤销，不自行设计密码学或 JWT。认证表由固定版本的库模型定义；升级须审阅迁移和公开接口并重跑真实 DB、DSH 与打包产物验证。
 
 ## 配置与迁移
 
@@ -37,11 +37,11 @@ pnpm start
 - [认证配置](../src/auth/config.ts)的 `readAuthConfig` 与 `authOptions` 由装配、运行时和显式迁移按职责复用；`AUTH_BASE_PATH` 是库选项、插件前缀注册和认证 HTTP 路径截取的同一权威值。`service.ts` 持有认证库与 DB 池，`http.ts` 负责白名单、来源、私有的有界正文读取和响应适配；`plugin.ts` 仅装配与释放。两个 HTTP 适配器共用的响应头与包装错误入口见 [API 领域导航](apis/index.md#运行时公共能力)，库原始响应仍由认证适配器转发。
 - [认证服务](../src/auth/service.ts)的 `Authentication.identity(headers)` 返回经数据库验证的 `{userId,sessionId}` 或 `null`；`/api/v1/me` 是实际消费者，调用时禁止刷新会话。后续 HTTP 适配器由装配入口取得身份解析能力，把已验证主体传给应用服务；应用服务再判断资源归属，不依赖 Node HTTP、DSH 或认证驱动，也不信任请求体 userId 或服务 token。项目 CRUD 尚未实现。
 - 首期邮箱未验证，不能用于第三方账号联结、团队邀请信任或邮件找回。邮箱验证、邮件找回、MFA、团队与生成分别按后续契约接入；未开放的入口返回 404。
-- 数据库错误不向客户端暴露连接串或异常栈；密码、cookie、会话 token 和部署秘密不写入公共日志或报告。
+- 数据库凭据与错误脱敏按 [PostgreSQL 使用契约](integrations/postgres.md#必须遵守的约束)执行；密码、cookie、会话 token 和部署秘密不写入公共日志或报告。
 
 ## 验证
 
-`pnpm test` 包含真实 PostgreSQL 集成：默认用 PATH 中的 `initdb`/`pg_ctl` 创建并清理独立临时集群；也可显式提供 `MIO_TEST_DATABASE_URL`，库名必须以 `_test` 结尾，每轮仅创建/清理自己的随机 schema。禁止使用业务库。CI 配置提供 PostgreSQL 16 服务。
+`pnpm test` 包含真实 PostgreSQL 集成，数据库环境选择、隔离和清理要求统一见 [PostgreSQL 验证入口](integrations/postgres.md#验证入口与变更影响)。
 
 `tests/auth.test.ts` 经真实 DSH HTTP 覆盖注册、重复邮箱、错误密码、会话失效/撤销与续期、密码更新、跨账号隔离、重载持久化、HTTPS cookie、来源/请求体/限流、迁移幂等与结构异常、注册事务回滚/并发唯一性、启动失败和启动中卸载；还构建并装载正式打包产物验证认证。原有工具拒绝、HTTP 错误与端口释放测试保留。
 

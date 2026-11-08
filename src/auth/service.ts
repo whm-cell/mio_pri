@@ -3,9 +3,10 @@ import { getMigrations } from 'better-auth/db/migration';
 import { Pool } from 'pg';
 import { authOptions } from './config.ts';
 import type { AuthConfig } from './config.ts';
+import type { AuthRateLimitStorage } from './rate-limit.ts';
 
 /** Runtime only checks schema; applying migrations is a separate, explicit service operation. */
-export async function createAuthentication(config: AuthConfig) {
+export async function createAuthentication(config: AuthConfig, rateLimit?: AuthRateLimitStorage) {
   const pool = new Pool({
     connectionString: config.databaseURL,
     max: 5,
@@ -15,6 +16,7 @@ export async function createAuthentication(config: AuthConfig) {
   pool.on('error', () => console.error('AUTH_DATABASE_CONNECTION_ERROR'));
   try {
     const options = authOptions(config, pool);
+    if (rateLimit) options.rateLimit = { ...options.rateLimit, customStorage: rateLimit };
     const migration = await getMigrations(options);
     if (
       migration.toBeCreated.length ||

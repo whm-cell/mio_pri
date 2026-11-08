@@ -45,6 +45,72 @@ function check(root: string) {
   return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
 }
 
+it.each([
+  ['src/integrations/redis.ts', 0],
+  ['src/auth/limit.ts', 1],
+  ['src/plugin.ts', 1],
+  ['scripts/service/redis-helper.ts', 1],
+  ['tests/redis-fixture.ts', 0],
+] as const)(
+  'keeps Redis driver imports in the public adapter and test fixtures: %s',
+  async (file, status) => {
+    const root = await fixture({ [file]: "export { createClient } from '@redis/client';" });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const result = check(root);
+    expect(result.status, result.output).toBe(status);
+    if (status) expect(result.output).toContain('REDIS_ADAPTER');
+  },
+);
+
+it.each(['src/auth/limit.ts', 'scripts/service/redis-helper.ts'])(
+  'checks Redis package ownership behind a paths alias in %s',
+  async (file) => {
+    const root = await fixture({
+      [file]: "export type { RedisClientOptions } from 'driver-alias';",
+    });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.paths = {
+      'driver-alias': [createRequire(import.meta.url).resolve('@redis/client')],
+    };
+    await writeFile(configPath, JSON.stringify(config));
+    const result = check(root);
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain('REDIS_ADAPTER');
+  },
+);
+
+it.each(['src/auth/value.ts', 'tests/value.ts', 'scripts/service/value.ts'])(
+  'rejects a reverse Redis dependency on %s',
+  async (target) => {
+    const root = await fixture({
+      [target]: 'export interface Value { id: string }',
+      'src/integrations/redis.ts': `export type { Value } from '../../${target}';`,
+    });
+    const result = check(root);
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain('REDIS_DIRECTION');
+  },
+);
+
+it('allows plugin/auth consumers of public Redis but denies migration tools', async () => {
+  const root = await fixture({
+    'src/integrations/redis.ts': 'export interface Resource { close(): void }',
+    'src/plugin.ts': "export type { Resource } from './integrations/redis.ts';",
+    'src/auth/limit.ts': "export type { Resource } from '../integrations/redis.ts';",
+  });
+  expect(check(root).status).toBe(0);
+  await mkdir(join(root, 'scripts/service'), { recursive: true });
+  await writeFile(
+    join(root, 'scripts/service/migrate.ts'),
+    "export type { Resource } from '../../src/integrations/redis.ts';",
+  );
+  const result = check(root);
+  expect(result.status, result.output).toBe(1);
+  expect(result.output).toContain('DEVELOPMENT_DEPENDENCY');
+});
+
 it('works without personal records; reports a long, low-branch function without blocking it', async () => {
   const root = await fixture({
     'src/long.ts': `export function list() {\nreturn [\n${Array.from({ length: 320 }, (_, i) => `${i},`).join('\n')}\n];\n}\n`,

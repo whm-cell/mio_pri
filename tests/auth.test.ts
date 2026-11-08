@@ -26,6 +26,7 @@ const envKeys = [
   'MIO_AUTH_SECRET',
   'MIO_AUTH_ALLOWED_ORIGINS',
   'MIO_AUTH_TEST_TOKEN',
+  'MIO_AUTH_RATE_LIMIT_BACKEND',
 ] as const;
 const previous = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
@@ -57,7 +58,7 @@ async function resetLimits() {
 
 beforeAll(async () => {
   database = await authDatabase();
-  pool = new Pool({ connectionString: database.url });
+  pool = new Pool({ connectionString: database.observerURL });
   ctx = new Context();
   await ctx.plugin(SystemPrompt);
   await ctx.plugin(Tools);
@@ -69,6 +70,7 @@ beforeAll(async () => {
     MIO_AUTH_SECRET: secret,
     MIO_AUTH_ALLOWED_ORIGINS: '["http://localhost:5173"]',
     MIO_AUTH_TEST_TOKEN: secret,
+    MIO_AUTH_RATE_LIMIT_BACKEND: 'database',
   });
   const migration = spawnSync(process.execPath, ['scripts/service/migrate-auth.ts', '--apply'], {
     encoding: 'utf8',
@@ -547,7 +549,7 @@ it('closes an acquired authentication pool when the plugin is unloaded before st
     expect((await call('/api/v1/me')).status).toBe(404);
     const count = await pool.query(
       'SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name=$1',
-      ['mio-auth'],
+      [database.applicationName],
     );
     expect(count.rows[0].n).toBe(0);
   } finally {
@@ -580,7 +582,7 @@ it('keeps auth startup failure non-ready and releases its database connections',
   await broken.dispose();
   const count = await pool.query(
     'SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name=$1',
-    ['mio-auth'],
+    [database.applicationName],
   );
   expect(count.rows[0].n).toBe(0);
 });

@@ -17,10 +17,23 @@
 
 使用 Node 24.22.2（DSH 最低要求 24.9）及 pnpm 11.6.0。版本固定在 package.json 和锁文件；公共安装、构建和 CI 不需要相邻源码仓库、全局 Skills 或成员的个人记录。
 
-认证集成测试还需要隔离的 PostgreSQL 环境，本机临时集群或显式测试数据库的选择及清理要求见 [PostgreSQL 验证入口](docs/integrations/postgres.md#验证入口与变更影响)。认证运行配置和迁移见[认证底座](docs/auth.md)。
+认证集成测试需要隔离 PostgreSQL 和 Redis 8.2.11 二进制，选择与清理要求见 [PostgreSQL](docs/integrations/postgres.md#验证入口与变更影响) 和 [Redis 验证入口](docs/integrations/redis.md#验证入口与变更影响)。Redis 测试各自启动临时进程，不能指向共享实例；切换/恢复演练真实等待三次 65 秒，完整检查需要数分钟。认证运行配置和迁移见[认证底座](docs/auth.md)。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts
+# Redis 8.2.11 已在 PATH 时直接执行；也可先按下方准备并设置 MIO_TEST_REDIS_SERVER。
+pnpm check
+```
+
+本机没有固定 Redis 时，可编译到忽略的任务目录，不启动长期全局服务：
+
+```sh
+mkdir -p .runtime/redis-build
+curl --fail --location https://download.redis.io/releases/redis-8.2.11.tar.gz -o .runtime/redis-build/redis-8.2.11.tar.gz
+echo 'fba14b77c4bdcb2d5418b6741fc0cdaac4b78bc73eab9b2e5f3c255d597f16fa  .runtime/redis-build/redis-8.2.11.tar.gz' | shasum -a 256 -c -
+tar -xzf .runtime/redis-build/redis-8.2.11.tar.gz -C .runtime/redis-build
+make -C .runtime/redis-build/redis-8.2.11 -j4 MALLOC=libc
+export MIO_TEST_REDIS_SERVER="$PWD/.runtime/redis-build/redis-8.2.11/src/redis-server"
 pnpm check
 ```
 

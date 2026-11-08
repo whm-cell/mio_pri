@@ -70,8 +70,13 @@ export async function authDatabase() {
     }
     const scoped = new URL(url);
     scoped.searchParams.set('options', `-csearch_path=${schema}`);
+    scoped.searchParams.set('application_name', schema);
+    const observer = new URL(scoped);
+    observer.searchParams.set('application_name', `${schema}_observer`);
     return {
       url: scoped.toString(),
+      observerURL: observer.toString(),
+      applicationName: schema,
       async close() {
         try {
           await pool.query(`DROP SCHEMA "${schema}" CASCADE`);

@@ -53,6 +53,7 @@
     "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "@deepseek-ai/schemastery": "3.19.0",
+    "@redis/client": "6.2.1",
     "better-auth": "1.7.18",
     "pg": "8.23.1"
   },

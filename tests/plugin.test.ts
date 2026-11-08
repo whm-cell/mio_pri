@@ -5,16 +5,30 @@ import Tools, { defineTool } from '@deepseek-ai/dsh-tools';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import * as NativeExecutor from '@deepseek-ai/dsh-tool-executor-native';
 import { ToolCallId } from '@deepseek-ai/dsh-llm';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Mio from '../src/plugin.ts';
 
 const contexts: Context[] = [];
 const token = randomBytes(32).toString('hex');
 const tokenEnv = 'MIO_TEST_ONLY_TOKEN';
 
+beforeEach(() => {
+  for (const key of [
+    'MIO_AUTH_BASE_URL',
+    'MIO_AUTH_SECRET',
+    'MIO_AUTH_DATABASE_URL',
+    'MIO_AUTH_ALLOWED_ORIGINS',
+    'MIO_AUTH_RATE_LIMIT_BACKEND',
+    'MIO_REDIS_URL',
+    'MIO_REDIS_NAMESPACE',
+  ])
+    vi.stubEnv(key, undefined);
+});
+
 afterEach(async () => {
   delete process.env[tokenEnv];
   await Promise.all(contexts.splice(0).map((ctx) => ctx.fiber.dispose()));
+  vi.unstubAllEnvs();
 });
 
 async function setup() {

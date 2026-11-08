@@ -173,6 +173,16 @@ export async function checkSource(root: string, files: readonly string[], harnes
         if (specifier.startsWith('.') && (!target || !resolve(root, target).startsWith(`${root}/`)))
           errors.push(`IMPORT_UNRESOLVED ${file}: ${specifier}`);
       }
+      const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
+      const redisPackage = [
+        specifier === 'redis' || specifier.startsWith('redis/')
+          ? 'redis'
+          : specifier.split('/').slice(0, 2).join('/'),
+        resolved?.packageId?.name,
+        packageName,
+      ].some((name) => name === 'redis' || name?.startsWith('@redis/'));
+      if ((production || developmentRoot) && redisPackage && file !== 'src/integrations/redis.ts')
+        errors.push(`REDIS_ADAPTER ${file}: Redis packages belong in src/integrations/redis.ts`);
       if (!production) continue;
       if (
         file === 'src/http-response.ts' &&
@@ -184,7 +194,15 @@ export async function checkSource(root: string, files: readonly string[], harnes
         errors.push(
           `HTTP_RESPONSE_DEPENDENCY ${file}: ${specifier} is outside Node HTTP/UUID and contracts`,
         );
-      const packageName = resolved && (await owningPackageName(resolved.resolvedFileName));
+      if (
+        file === 'src/integrations/redis.ts' &&
+        target &&
+        !resolved?.isExternalLibraryImport &&
+        target !== 'src/contracts.ts'
+      )
+        errors.push(
+          `REDIS_DIRECTION ${file}: public Redis must not depend on consumers or tooling`,
+        );
       const authPackage = [specifier.split('/')[0], resolved?.packageId?.name, packageName].some(
         (name) =>
           name === 'better-auth' ||

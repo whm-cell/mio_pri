@@ -8,12 +8,13 @@
 
 配置只从服务端环境注入，不写入仓库、Profile 或前端构建。
 
-| 变量                       | 要求                                                                                             |
-| -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `MIO_AUTH_BASE_URL`        | 固定对外 origin，如 `https://mio.example.com`，不含路径或末尾 `/`；HTTPS，回环主机可用 HTTP 开发 |
-| `MIO_AUTH_SECRET`          | 至少 32 字符的随机秘密，重启时保持；轮换会使旧签名 cookie 失效                                   |
-| `MIO_AUTH_DATABASE_URL`    | 专用 PostgreSQL 数据库连接，凭据只在服务端持有                                                   |
-| `MIO_AUTH_ALLOWED_ORIGINS` | 额外精确 origin 的 JSON 数组，默认 `[]`；BASE_URL 自身自动包含，禁止通配符                       |
+| 变量                          | 要求                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `MIO_AUTH_BASE_URL`           | 固定对外 origin，如 `https://mio.example.com`，不含路径或末尾 `/`；HTTPS，回环主机可用 HTTP 开发 |
+| `MIO_AUTH_SECRET`             | 至少 32 字符的随机秘密，重启时保持；轮换会使旧签名 cookie 失效                                   |
+| `MIO_AUTH_DATABASE_URL`       | 专用 PostgreSQL 数据库连接，凭据只在服务端持有                                                   |
+| `MIO_AUTH_ALLOWED_ORIGINS`    | 额外精确 origin 的 JSON 数组，默认 `[]`；BASE_URL 自身自动包含，禁止通配符                       |
+| `MIO_AUTH_RATE_LIMIT_BACKEND` | `database`（缺省）或显式 `redis`；Redis 资源配置见[公共契约](integrations/redis.md)              |
 
 三个必要配置均未提供时保持原无 DB 的 foundation Profile；提供任一却不完整会拒绝装载，不能静默降级。此兼容边界用于既有基础插件和开发环境；启用认证须配置完整并先迁移。
 
@@ -31,6 +32,20 @@ pnpm start
 ## HTTP 入口
 
 现行接口的身份、输入输出、错误和副作用在[认证 HTTP 契约](apis/auth.md)唯一维护；Foundation 服务凭据接口另见[Foundation 域](apis/foundation.md)。本章节保留旧导航，配置和迁移仍由本页维护。
+
+## 限流存储与恢复
+
+默认保留 PostgreSQL 限流；仅设置 Redis URL 不启用。显式 `redis` 必须有完整认证配置和有效 Redis URL/命名空间，否则拒绝装载。连接、固定版本、时限、权限及资源隔离沿 [Redis 公共契约](integrations/redis.md)；插件创建资源并将公开 `customStorage.consume` 注入认证。启动执行独占探测键的真实消费、TTL 检查和删除，成功才装载认证入口。
+
+Better Auth 继续选择规则和 IP/路径键；[认证消费者](../src/auth/rate-limit.ts)把原键 SHA-256 后存为 `mio:<namespace>:auth:rate-limit:v1:<digest>`。摘要只用于固定长度，不是 IP 匿名化或授权。状态仅含计数和最近放行的毫秒时间，不存密码、cookie 或会话 token。Redis TIME 统一逻辑时间；单键 Lua 原子检查/计数/PX 过期。放行推动最近时间与 TTL，拒绝不改计数、不续 TTL，超过窗口重新从 1 开始；坏值、无过期或时钟倒退不清零放行。规则和原始 429 见[HTTP 契约](apis/auth.md)。
+
+账号、凭据、会话和撤销仍以原 PostgreSQL 为准，不配置全局 secondaryStorage，`/me` 不经过 Redis 消费也不续期。`authOptions` 的 database 限流模型保持不变；运行时才注入 consume，显式迁移不读取 Redis 配置、不连接 Redis、不删旧表。
+
+消费失败转发为脱敏 503。仅能证明未发出的队列满、服务明确在脚本执行前拒写的 OOM 可只拒绝当前请求；恢复容量后仍按原计数继续。断连、总期限到期、脚本/数据异常等未知状态停止后续消费并销毁连接，无 DB 回退、自动重连、重放或 PING 自愈。已装载进程且 DB 正常时 `/me` 继续可用；登录、续期、退出、改密、撤销等受限入口都可能 503。
+
+切换、回退或故障恢复由操作者停止整个 Mio Profile，确认旧进程、PG 语句和 Redis 消费已排清；排清预算 30 秒，从最后不再可能消费时刻用单调时间等待 65 秒（当前最大窗口 60 秒加 5 秒余量）。预检固定版本、资源策略、凭据、原表、secret、应用/Redis 时钟偏差不超过 2 秒，前置失败保持暂停。计划维护预算 5 分钟，超预算报告并选择继续暂停或安全回退，不能为守时限略过等待。
+
+依赖初始化成功即恢复入口，随后核对原账号/cookie、已撤销会话、额度与存储，异常再次暂停。维护期间认证、`/me`、Foundation 均可能不可达，没有独立维护响应或现场验证后才放流的门控。正常计划重载仅在 Redis 未丢失且旧客户端已排清时复用计数；Redis 重启/清空、未知原因重启都按故障恢复等待，禁止外部进程管理器立即重启绕过。详细切片安排与验收见[PRD §6](tasks/auth-rate-limit-redis/prd.md#6-迁移回退与故障恢复)，真实环境部署须另有明确目标与授权。
 
 ## 职责与限制
 

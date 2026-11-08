@@ -4,9 +4,11 @@ import type {} from '@deepseek-ai/dsh-host-webserver';
 import type {} from '@deepseek-ai/dsh-tools';
 import z from '@deepseek-ai/schemastery';
 import { createHandler } from './http.ts';
-import { AUTH_BASE_PATH, readAuthConfig } from './auth/config.ts';
+import { AUTH_BASE_PATH, readAuthConfig, readAuthRateLimitBackend } from './auth/config.ts';
 import { createAuthentication } from './auth/service.ts';
 import { createAuthHandler } from './auth/http.ts';
+import { createRedisRateLimit } from './auth/rate-limit.ts';
+import { createRedisResource, readRedisConfig } from './integrations/redis.ts';
 
 export const name = 'mio-foundation';
 export const inject = ['webServer', 'tools'];
@@ -34,13 +36,25 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => 'MIO_TOOL_DENIED: no business tool is authorized in the foundation profile',
   );
   const authConfig = readAuthConfig();
+  const backend = readAuthRateLimitBackend();
+  if (backend === 'redis' && !authConfig)
+    throw new Error('AUTH_CONFIG: authentication is required for Redis rate limiting');
   if (authConfig) {
-    const auth = await createAuthentication(authConfig);
+    const redisConfig = backend === 'redis' ? readRedisConfig() : undefined;
+    const deadline = performance.now() + 5000;
+    const redis = redisConfig ? await createRedisResource(redisConfig, deadline) : undefined;
+    let auth;
     try {
-      ctx.effect(() => () => auth.close());
+      const rateLimit =
+        redis && (await createRedisRateLimit(redis, redisConfig!.namespace, deadline));
+      auth = await createAuthentication(authConfig, rateLimit);
+      const acquired = auth;
+      ctx.effect(() => async () => {
+        await Promise.all([acquired.close(), redis?.close()]);
+      });
     } catch (error) {
-      // The fiber may have been disposed while the database was connecting.
-      await auth.close();
+      // The fiber may have been disposed while either dependency was connecting.
+      await Promise.all([auth?.close(), redis?.close()]);
       throw error;
     }
     const authHandler = createAuthHandler(authConfig, auth);

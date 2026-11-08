@@ -14,7 +14,18 @@ cookie 使用 HttpOnly、SameSite=Lax，HTTPS 配置带 Secure，不设置跨域
 
 认证库响应沿固定版本契约，错误通常为 `{code,message}`，限流等保留库的状态、原始正文与响应头；多个 Set-Cookie 分别转发，库的 cache-control 不覆盖本服务禁缓存策略。适配器的 Origin、方法、正文或基础设施错误采用 `{error:{code,message,requestId}}` 与 `Content-Type: application/json`。所有响应带服务端生成的 `X-Request-Id`、`Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`；包装错误的 requestId 与响应头一致。消费者按入口与 HTTP 状态处理，不能假定与 Foundation 错误体完全相同。共同实现入口见[运行时公共能力](index.md#运行时公共能力)。
 
-限流采用直接连接地址，覆盖客户端传来的 IP 头：登录每分钟 10 次、注册每分钟 5 次；其他入口沿用库的全局及敏感操作规则，计数存入 DB。代理后的客户端共享代理地址限额，正式部署需要在可信边缘配置限流；当前未验证任意代理链或多实例容量。库自身 CSRF 和适配器 Origin 检查均保留。
+限流采用直接连接地址，覆盖客户端传来的 IP 头；库按规范化 IP 和路径计数，查询参数不另开额度。当前完整规则如下，均在 `/api/auth` 下：
+
+| 路径                                                                                                           | 窗口/额度           |
+| -------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `/sign-in/email`                                                                                               | 60 秒 / 10 次       |
+| `/sign-up/email`                                                                                               | 60 秒 / 5 次        |
+| `/change-password`                                                                                             | 10 秒 / 3 次        |
+| `/sign-out`、`/get-session`、`/list-sessions`、`/revoke-session`、`/revoke-sessions`、`/revoke-other-sessions` | 各自 60 秒 / 100 次 |
+
+错误凭据也占一次放行额度；适配器提前拒绝的 Origin、路径、方法、正文错误和 OPTIONS 不消费。窗口从最近放行计算，放行更新该时间，拒绝不更新；额度耗尽保留库 429 原始消息与 `X-Retry-After`（向上取整的剩余秒数）。代理后的客户端共享代理地址限额，正式部署需要在可信边缘配置限流；当前未验证任意代理链或多实例容量。库自身 CSRF 和适配器 Origin 检查均保留。
+
+计数默认在 DB，显式 Redis 选择与恢复按[认证配置](../auth.md#限流存储与恢复)，资源边界见[Redis 契约](../integrations/redis.md)。Redis 失败返回包装 `503 AUTH_UNAVAILABLE`，不是超额 429；没有静默 DB 回退。未知状态后受限入口持续 503，直至操作者排清、等待并重启；已装载且 DB 正常时 `/api/v1/me` 仍查询 DB。PG 账号/会话、cookie 和原迁移模型不因 Redis 计数改变；整进程维护期间入口可能不可达。
 
 ## POST /api/auth/sign-up/email
 

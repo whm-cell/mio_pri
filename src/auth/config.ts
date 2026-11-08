@@ -10,6 +10,14 @@ export interface AuthConfig {
   origins: readonly string[];
 }
 
+/** Runtime selection is separate so the explicit PostgreSQL migration never consumes Redis. */
+export function readAuthRateLimitBackend(env: NodeJS.ProcessEnv = process.env) {
+  const backend = env.MIO_AUTH_RATE_LIMIT_BACKEND ?? 'database';
+  if (backend !== 'database' && backend !== 'redis')
+    throw new Error('AUTH_CONFIG: rate limit backend must be database or redis');
+  return backend;
+}
+
 /** The public URL is deployment configuration, never derived from Host or forwarded headers. */
 export function readAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig | undefined {
   const keys = ['MIO_AUTH_BASE_URL', 'MIO_AUTH_SECRET', 'MIO_AUTH_DATABASE_URL'] as const;

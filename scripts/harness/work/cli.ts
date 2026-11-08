@@ -361,7 +361,7 @@ async function main(activity?: CommandActivity) {
     artifact: evidencePath,
     sha256: digest(await readFile(await checkedPath(root, evidencePath))),
     candidate: state.candidate,
-    summary: `${json(argv).trim()}; exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
+    summary: `exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
     environment: environment(),
   });
   if (outcome.unsettled)

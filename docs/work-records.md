@@ -44,7 +44,7 @@ Agent 依 [拆解与生命周期](coordination.md#开始任务) 从公共 PRD／
 }
 ```
 
-返回 created、revision、task 摘要及 assessment。首次自动建立本工作区的 member.json；本地成员标签由真实工作区路径摘要生成，不代表人员认证。已有成员标签沿用，错误归属或复制到其他位置的目录仍拒绝；每人在自己的 checkout/worktree 操作。
+返回 created、revision、task 摘要及 assessment。ensure／update／context 的 task 和 check 的 requiredContext 总是显示 result：对象表示已声明开发成果，null 只表示未声明，不自动认定为维护任务；status 仍只是任务目录。首次核对时按已确认目标检查归属，开发成果补齐后再实施／取证；维护无需补造 result。首次自动建立本工作区的 member.json；本地成员标签由真实工作区路径摘要生成，不代表人员认证。已有成员标签沿用，错误归属或复制到其他位置的目录仍拒绝；每人在自己的 checkout/worktree 操作。
 
 requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；新建须对应当前公共 Markdown 中唯一的真实标题文字，内联格式按 AST 读取，围栏里的假标题不算；标题可定位不证明需求语义正确，任务是否重复仍由实际审阅判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
 
@@ -75,7 +75,9 @@ pnpm work status --query auth --limit 10
 pnpm work guide start --section 'docs/coordination.md#开始任务'
 ```
 
-记录字段、数组、核验错误与已登记证据默认有界，省略值给出明确的 `$read` 定位；沿返回 argv 调用 `read` 精确展开当前任务、核验细节或原件。分页使用 `--offset`、`--limit`，续页携带返回的 `--hash`，原件变化则拒绝混读不同版本。长字符串按 Unicode 字符分页，不直接截断 JSON；目录条数受限之外还有结构输出预算。`checkedReady` 表示完整现场核验结论，`ready` 还考虑当前视图是否省略必要授权／阻塞；未展开不能当作已处理。CLI 不另存“已读”状态，Agent 展开引用后结合实际授权和完整核验决定下一步。请求或系统异常若无可重读来源，只给有界诊断并明确完整正文未持久化，不伪造详情入口。
+记录字段、数组、核验错误与已登记证据默认有界，省略值给出明确的 `$read` 定位；沿返回 argv 调用 `read` 精确展开当前任务、核验细节或原件。分页使用 `--offset`、`--limit`，续页携带返回的 `--hash`，原件变化则拒绝混读不同版本。长字符串按 Unicode 字符分页，不直接截断 JSON；目录条数受限之外还有结构输出预算。请求或系统异常若无可重读来源，只给有界诊断并明确完整正文未持久化，不伪造详情入口。
+
+`ready` 表示完整现场核验并计入审阅拒绝、规范问题等真实阻塞；`readyForAcceptance` 还要求当前证据与交付草稿就绪。二者不因输出省略而变为 false，也不代表已取得授权或人类接受。`checkedReady`／`checkedReadyForAcceptance` 保留底层核验值，不能绕过 blocking 单独使用。原 `blocking.unexpandedAuthority` 改由 `reading.omitted` 列出当前视图省略的关键字段名，精确入口仍在 task／requiredContext 的 `$read`；这不表示现场阻塞或此前没有读过。未核对的必要授权、范围、决策、阻塞及验收仍须展开；已核对且现场未变时复用，无需为清空省略提示重复读取。CLI 不保存已读状态，Agent 结合实际授权和当前核验判断下一步。
 
 context、ensure 和成功 update 都返回完整现场核验的有界视图。已核对其中的实际结论、展开必要授权／阻塞／验收，且此后现场未变化时，可直接沿下一动作推进，无需再单独 check。退出码 0、stage、status 或仅 read 任务字段不具备这个含义；update 保存成功也可能返回待 sync 的现场差异。现场还包括原件、授权／依赖与在途操作，不能只看 revision 或 candidate 未变。发现变化或核验缺项时重新核对；命令入口仍执行实时前置与互斥，原生编辑仍遵守[实施与协作](coordination.md#实施与协作)。
 
@@ -134,7 +136,7 @@ pnpm work exec api-probe -- sh -c 'printf "%s\n" "document text" > docs/example.
 
 ## 记录证据
 
-原件准备的阶段与写入方式统一见[验证与接受](coordination.md#验证与接受)；以下命令登记已有原件，不替代其准备步骤。
+原件准备的阶段与写入方式统一见[验证与接受](coordination.md#验证与接受)；以下命令登记已有原件，不替代其准备步骤。自动证据 summary 只保存退出、取消、未结束和输入变化结论及必要异常诊断；完整 argv 保存在 artifact 指向的原件中，不复制到摘要。旧摘要仍可读取，不改写历史原件或重新绑定候选；实际复核命令与观察范围时读取原件。
 
 ```sh
 pnpm work run api-probe checks -- pnpm check

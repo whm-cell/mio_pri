@@ -25,7 +25,7 @@ function assessmentSource(assessment: Record<string, unknown>, reviewDecision: u
   };
 }
 
-/** Presentation can withhold readiness; it cannot replace the full execution assessment. */
+/** Reading omissions describe the view, independently of the actual assessment. */
 export function inspectionOutput(result: Record<string, unknown>) {
   const task = result.task as Record<string, unknown>;
   const assessment = result.assessment as Record<string, unknown>;
@@ -54,13 +54,10 @@ export function inspectionOutput(result: Record<string, unknown>) {
     sha256: assessmentHash,
   }));
   const critical = ['authorization', 'scope', 'nonGoals', 'decisions', 'blockers', 'dependencies'];
-  const incomplete =
-    hasReadReference(taskView) &&
-    critical.some((field) => {
-      if (!taskView || typeof taskView !== 'object' || Object.hasOwn(taskView, '$read'))
-        return true;
-      return hasReadReference((taskView as Record<string, unknown>)[field]);
-    });
+  const omitted = critical.filter((field) => {
+    if (!taskView || typeof taskView !== 'object' || Object.hasOwn(taskView, '$read')) return true;
+    return hasReadReference((taskView as Record<string, unknown>)[field]);
+  });
   const array = (key: string) =>
     Array.isArray(assessment[key]) ? (assessment[key] as unknown[]) : [];
   const errors = array('errors').length;
@@ -77,12 +74,18 @@ export function inspectionOutput(result: Record<string, unknown>) {
       (task.dependencies as { ready: boolean }[] | undefined)?.filter((item) => !item.ready)
         .length ?? 0,
     requestChanges: task.reviewDecision === 'REQUEST_CHANGES',
-    unexpandedAuthority: incomplete,
   };
   const ready = assessment.ready === true && !Object.values(blocking).some(Boolean);
   return {
     ...result,
-    task: taskView,
+    task: {
+      ...(taskView as Record<string, unknown>),
+      // Keep the declaration visible even when the rest of the task folds to a root read.
+      result: finiteOutput(task.result ?? null, (pointer) => ({
+        argv: ['read', id, 'task', '--select', `/plan/result${pointer}`],
+        sha256: revision,
+      })),
+    },
     assessment: {
       ...(assessmentView && typeof assessmentView === 'object' ? assessmentView : {}),
       ready,
@@ -95,6 +98,7 @@ export function inspectionOutput(result: Record<string, unknown>) {
         : {}),
       checked: true,
       blocking,
+      reading: { omitted },
       evidenceCounts: Object.fromEntries(
         ['pass', 'fail', 'pending', 'missing', 'corrupt', 'invalid'].map((key) => [
           key,
@@ -114,6 +118,7 @@ export function assessmentOutput(
     revision,
     task: {
       id: task.plan.id,
+      result: task.plan.result ?? null,
       authorization: task.plan.authorization,
       scope: task.plan.scope,
       nonGoals: task.plan.nonGoals,

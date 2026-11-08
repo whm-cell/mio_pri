@@ -155,7 +155,7 @@ it('keeps long manifest path identities readable within the object page budget',
   expect(invoke(root, ['read', id, 'task', selected]).value().text).toBe(sha256);
 });
 
-it('bounds ensure/update/context while keeping hidden authority and late OPEN decisions pending', async () => {
+it('separates omitted authority from readiness while still blocking late OPEN decisions', async () => {
   const root = await fixture();
   const authorization = 'The fixture user explicitly authorizes the scoped implementation. '.repeat(
     2000,
@@ -163,9 +163,11 @@ it('bounds ensure/update/context while keeping hidden authority and late OPEN de
   const { id, result } = await ready(root, authorization);
   expect(result.task.authorization.$read).toBeDefined();
   expect(result.assessment.checkedReady).toBe(true);
-  expect(result.assessment.ready).toBe(false);
+  expect(result.assessment.ready).toBe(true);
+  expect(result.assessment.reading.omitted).toEqual(['authorization']);
   const checked = invoke(root, ['check', id]).value();
-  expect(checked.ready).toBe(false);
+  expect(checked.ready).toBe(true);
+  expect(checked.reading.omitted).toEqual(['authorization']);
   expect(invoke(root, checked.requiredContext.authorization.$read.argv).value().text).toBe(
     authorization.slice(0, 1024),
   );
@@ -189,6 +191,7 @@ it('bounds ensure/update/context while keeping hidden authority and late OPEN de
   const current = invoke(root, ['context', id, 'implement']).value();
   expect(current.assessment.ready).toBe(false);
   expect(current.assessment.blocking.openDecisions).toBe(1);
+  expect(current.assessment.reading.omitted).toContain('decisions');
   const decision = invoke(root, ['read', id, 'task', '/plan/decisions/999']).value();
   expect(decision.entries.find((entry: { key: string }) => entry.key === 'status').value).toBe(
     'OPEN',
@@ -246,7 +249,7 @@ it('keeps a recorded request for changes distinct from a valid execution assessm
   expect(invoke(root, ['read', id, 'check', '/ready']).value().value).toBe(false);
 });
 
-it('uses the same critical scope view for context, check and sync', async () => {
+it('keeps readiness stable across scope pagination without recording reading state', async () => {
   const root = await fixture();
   const { id, result } = await ready(root);
   const scope = Array.from({ length: 7 }, (_, index) =>
@@ -267,14 +270,122 @@ it('uses the same critical scope view for context, check and sync', async () => 
   const checked = invoke(root, ['check', id]).value();
   for (const assessment of [context.assessment, synced, checked]) {
     expect(assessment.checkedReady).toBe(true);
-    expect(assessment.ready).toBe(false);
-    expect(assessment.blocking.unexpandedAuthority).toBe(true);
+    expect(assessment.ready).toBe(true);
+    expect(assessment.reading.omitted).toEqual(['scope']);
+    expect(Object.values(assessment.blocking).every((value) => !value)).toBe(true);
   }
+  const beforeReading = await readFile(path(root, id), 'utf8');
   expect(synced.requiredContext.scope.total).toBe(7);
   expect(invoke(root, checked.requiredContext.scope.$read.argv).value().items).toEqual(
     scope.slice(0, 1),
   );
+  expect(invoke(root, ['check', id]).value().ready).toBe(true);
+  expect(await readFile(path(root, id), 'utf8')).toBe(beforeReading);
 });
+
+it('shows an undeclared development result without classifying or blocking maintenance', async () => {
+  const root = await fixture();
+  const { id, result } = await ready(root);
+  expect(result.task.result).toBeNull();
+  expect(result.assessment.ready).toBe(true);
+  const checked = invoke(root, ['check', id]).value();
+  expect(checked.requiredContext.result).toBeNull();
+  expect(checked.readyForAcceptance).toBe(false);
+  expect(
+    invoke(root, ['update', id, '--stdin'], {
+      revision: result.revision,
+      reason: 'Observe the maintenance fixture without declaring a business result.',
+      stage: 'C1_EVIDENCE_PENDING',
+      plan: { nextAction: 'Run the authorized fixture check.' },
+    }).status,
+  ).toBe(0);
+  expect(
+    invoke(root, ['run', id, 'checks', '--', process.execPath, '-e', 'process.exit(0)']).status,
+  ).toBe(0);
+  const current = invoke(root, ['context', id, 'verify']).value();
+  expect(current.task.result).toBeNull();
+  expect(current.task.nextAction).toContain('No development result is declared');
+  expect(current.task.nextAction).toContain('Development delivery needs plan.result');
+  expect(current.task.nextAction).toContain('maintenance may be returned');
+  const saved = JSON.parse(await readFile(path(root, id), 'utf8')) as Task;
+  expect(saved.plan).not.toHaveProperty('result');
+});
+
+it('keeps the result declaration visible when the whole task view exceeds its budget', async () => {
+  const root = await fixture();
+  const { id } = await ready(root);
+  const task = JSON.parse(await readFile(path(root, id), 'utf8')) as Task;
+  const prd = 'docs/tasks/probe/prd.md';
+  await mkdir(join(root, 'docs/tasks/probe'), { recursive: true });
+  await writeFile(join(root, prd), '# Probe PRD\n');
+  const config = JSON.parse(await readFile(join(root, 'harness.config.json'), 'utf8'));
+  config.taskDocuments = [{ kind: 'prd', identity: prd, path: prd }];
+  await writeFile(join(root, 'harness.config.json'), json(config));
+  const detail = '明确的夹具说明'.repeat(80);
+  task.plan.nonGoals = Array.from({ length: 5 }, () => detail);
+  task.plan.decisions = Array.from({ length: 5 }, () => ({
+    status: 'CONFIRMED',
+    text: detail,
+    source: detail,
+  }));
+  task.plan.dependencies = Array.from({ length: 5 }, () => ({
+    task: detail,
+    ref: detail,
+    ready: true,
+  }));
+  for (const declared of [false, true]) {
+    if (declared) task.plan.result = { prd, key: 'probe' };
+    await save(root, task);
+    const context = invoke(root, ['context', id, 'resume']).value();
+    const checkedCall = invoke(root, ['check', id]);
+    expect(checkedCall.output).toMatch(/^\{/);
+    const checked = checkedCall.value();
+    for (const view of [context.task, checked.requiredContext]) {
+      expect(view.$read).toBeDefined();
+      expect(view.result).toEqual(task.plan.result ?? null);
+    }
+  }
+});
+
+it.each([0, 7])(
+  'keeps long argv in the original with a short summary for exit %i',
+  async (exit) => {
+    const root = await fixture();
+    const { id, result } = await ready(root);
+    expect(
+      invoke(root, ['update', id, '--stdin'], {
+        revision: result.revision,
+        reason: 'Measure command detail storage without changing the observed fixture.',
+        stage: 'C1_EVIDENCE_PENDING',
+        plan: { nextAction: 'Run a short and long command and inspect the originals.' },
+      }).status,
+    ).toBe(0);
+    const short = `process.exit(${exit})`;
+    const long = `/*${'command detail '.repeat(2000)}*/${short}`;
+    for (const script of [short, long]) {
+      const run = invoke(root, ['run', id, 'checks', '--', process.execPath, '-e', script]);
+      expect(run.status).toBe(exit === 0 ? 0 : 1);
+    }
+    const task = JSON.parse(await readFile(path(root, id), 'utf8')) as Task;
+    expect(task.evidence).toHaveLength(2);
+    expect(task.evidence[1]!.summary).toBe(task.evidence[0]!.summary);
+    expect(task.evidence[1]!.summary).toContain(`exit ${exit}`);
+    expect(task.evidence[1]!.summary.length).toBeLessThan(160);
+    const entry = task.evidence[1]!;
+    const original = await readFile(join(root, entry.artifact), 'utf8');
+    expect(digest(original)).toBe(entry.sha256);
+    expect(original).toContain(JSON.stringify(long));
+    expect(entry.result).toBe(exit === 0 ? 'pass' : 'fail');
+    expect(invoke(root, ['read', id, 'evidence', '1']).value().integrity).toBe('verified');
+    // Old records containing argv in their summary remain readable without migration.
+    task.evidence[0]!.summary = `${JSON.stringify([process.execPath, '-e', short])}; exit ${exit}`;
+    await save(root, task);
+    expect(invoke(root, ['read', id, 'evidence', '0']).value().integrity).toBe('verified');
+    const checked = invoke(root, ['check', id]).value();
+    expect(checked.evidence[0].result).toBe(entry.result);
+    expect(checked.readyForAcceptance).toBe(false);
+  },
+);
 
 it('reads one ledger-bound failed original in exact Unicode segments and reports corruption', async () => {
   const root = await fixture();

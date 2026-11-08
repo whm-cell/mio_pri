@@ -315,5 +315,5 @@ export function addEvidence(task: Task, entry: Evidence) {
     `Review ${entry.criterion} (${entry.result}), current originals and remaining gaps; ` +
     (task.plan.result
       ? 'when sufficient, prepare the candidate for actual acceptance.'
-      : 'when sufficient, return the maintenance result and archive as appropriate.');
+      : 'No development result is declared; check the task intent. Development delivery needs plan.result; maintenance may be returned and archived when sufficient.');
 }

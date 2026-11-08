@@ -353,6 +353,32 @@ it.each(['begin', 'finish'])(
 );
 
 // v5 public-result behavior.
+it('keeps a prepared large scope ready for review while still rejecting damaged evidence', async () => {
+  const root = await fixture();
+  await setup(root);
+  const { task, raw } = await loadTask(root, 'probe');
+  task.plan.scope.push(...Array.from({ length: 6 }, (_, index) => `src/planned-${index}.ts`));
+  await saveTask(root, task, raw);
+  await passing(root);
+  await prepare(root);
+  const current = invoke(root, ['context', 'probe', 'deliver']);
+  expect(current.status, current.stderr).toBe(0);
+  const view = JSON.parse(current.stdout);
+  expect(view.task.result).toEqual({ prd, key: 'probe' });
+  expect(view.assessment.readyForAcceptance).toBe(true);
+  expect(view.assessment.reading.omitted).toEqual(['scope']);
+  const checked = JSON.parse(invoke(root, ['check', 'probe']).stdout);
+  expect(checked.readyForAcceptance).toBe(true);
+  expect(checked.requiredContext.result).toEqual(view.task.result);
+  const loaded = await loadTask(root, 'probe');
+  const entry = loaded.task.evidence.at(-1)!;
+  await writeFile(join(root, entry.artifact), 'Damaged fixture original');
+  const damaged = JSON.parse(invoke(root, ['check', 'probe']).stdout);
+  expect(damaged.readyForAcceptance).toBe(false);
+  expect(damaged.evidenceCounts.corrupt).toBe(1);
+  await expect(deliver(root, 'probe', json(await completeRequest(root)))).rejects.toThrow();
+});
+
 it('prepares privately and publishes only a current, explicitly accepted v5 summary', async () => {
   const root = await fixture();
   await setup(root);

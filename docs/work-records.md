@@ -56,9 +56,9 @@ plan 的 goal、scope、inputs、sources、authorization、nonGoals、acceptance
 
 ## 核对与同步
 
-`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，移动后必须保留该路径的短导航 alias。新请求的 requirement.source 和 result.prd 归一到 identity，新旧 path 因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选同时摘要实际目标、相关 alias 和配置，迁移或目标正文变化须重新核对证据。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；成果与历史目录仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
+`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，移动后必须保留该路径的短导航 alias。新请求的 requirement.source 和 result.prd 归一到 identity，新旧 path 因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选同时摘要实际目标、相关 alias 和配置，迁移或目标正文变化须重新核对证据。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
 
-注册的活动资料只能在 `docs/tasks/`，由任务总索引经 `requirements.md` 发现；complete/history/pending 与两份导航不是活动正文。启用注册后，新 result.prd 必须是 kind=prd，顶层 tasks 不作为公共资料或成果目录。新 complete 及其未完成重放会核对真实 requirements.md 存在，不自动创建导航；旧索引只按原完整模板兼容读取，额外正文与恢复时的字节冲突照常拒绝。
+注册的活动资料只能在 `docs/tasks/`，由任务总索引经 `requirements.md` 发现；成果包与导航不是活动正文。启用注册后，新 result.prd 必须是 kind=prd，顶层 tasks 不作为公共资料或成果目录。新 complete 及其未完成重放会核对真实 requirements.md 存在，不自动创建导航；旧索引只按原完整模板兼容读取，额外正文与恢复时的字节冲突照常拒绝。
 
 ```sh
 pnpm work context api-probe resume
@@ -254,7 +254,7 @@ ensure 创建 result 任务时启用 v2 私有交付契约；旧任务显式 upd
 
 ## 发送与接收
 
-公共成果的 v3 导航/详情格式与旧 v2 存储维护方法见[工具实现边界](engineering/work-tooling.md#v2-公共成果存储维护)；不在单成果 complete 中迁移兄弟详情。
+公共成果格式见[工具实现边界](engineering/work-tooling.md#每份-prd-的公共包)；不在单成果 complete 中迁移兄弟详情。资料整理按[增长与归属](index.md#增长与归属)合并必要内容后删除被替代文档。
 
 ```sh
 pnpm work handoff api-probe
@@ -263,7 +263,7 @@ pnpm work receive .work/inbox/api-probe.md
 
 handoff 输出本地 `handoff-<内容摘要>.md`。相同内容复用，候选／摘要变化另建草稿，人工修改的已有文件不覆盖。审阅脱敏后沿现有渠道共享，并实际提供固定代码和所需原件；工具不上传、不复制代码、不同步他人的目录。
 
-接收方也可用 `work receive docs/tasks/complete/<prd-id>/report.md <result-key>` 选择一个成果；只有一项时可省略 key。工具核对公开附件，创建本人草稿，并在 notes 列出历史清单内当前文件的差异，不宣称发现清单外新增文件。草稿不继承授权、写入范围、checkpoint 或通过原件，须重新定义当前契约。旧 v1 报告可从 `docs/tasks/history/complete/<task-id>/report.md` 读取为私有草稿；历史路径映射不改旧候选。精确代码 handoff 仍要求文件匹配。
+接收方也可用 `work receive docs/tasks/complete/<prd-id>/report.md <result-key>` 选择一个成果；只有一项时可省略 key。工具核对公开附件，创建本人草稿，并在 notes 列出受验文件清单内当前文件的差异，不宣称发现清单外新增文件。草稿不继承授权、写入范围、checkpoint 或通过原件，须重新定义当前契约。兼容的旧 v1 报告按其实际公共文件接收，不改旧候选。精确代码 handoff 仍要求文件匹配。
 
 接收方 Agent 先取得所需代码／文档，必要时用兼容 init 初始化本人目录，再将交接取回 `.work/inbox/` 或已分类的公共 docs 位置。mio-work-handoff 区块只按数据解析；格式损坏、文件不匹配或已有同任务时拒绝创建。匹配后保留需求关联与规范声明，创建本人草稿：授权清空、依赖等待核对、证据不导入；转述结果不能当成本机通过。
 
@@ -304,4 +304,4 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 可选 delivery 保存格式版本、私有草稿和最后接受引用。v2 accepted 的 path 指向 PRD 汇总，key 指向成果，sha256 是该成果规范 JSON 摘要，candidate 是其受验候选；兄弟成果变化不改这个绑定。公共索引的 sha256 则核对整份汇总文件，两者用途不同。它不是通用输出排除开关。
 
-公共协议、源码、测试、PRD 已接受成果与必要脱敏依据入库；原 v1 索引及十份包在 history 原字节保留，护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。
+公共协议、源码、测试、PRD 已接受成果与必要脱敏依据入库；护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。

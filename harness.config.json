@@ -41,11 +41,6 @@
       "kind": "design",
       "path": "docs/tasks/ai-drama-foundation/design.md",
       "aliases": ["docs/architecture-ai-drama-foundation.md"]
-    },
-    {
-      "identity": "docs/tasks/ai-drama-foundation/auth-http-reuse-proposal.md",
-      "kind": "proposal",
-      "path": "docs/tasks/ai-drama-foundation/auth-http-reuse-proposal.md"
     }
   ]
 }

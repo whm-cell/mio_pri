@@ -1,20 +1,3 @@
 # 资料已迁移
 
 [当前资料](tasks/ai-drama-foundation/design.md)
-
-- <a id="ai-漫剧技术底座s0-架构基线"></a>[AI 漫剧技术底座：S0 架构基线](tasks/ai-drama-foundation/design.md#ai-漫剧技术底座s0-架构基线)
-- <a id="已确认前提与首期取舍"></a>[已确认前提与首期取舍](tasks/ai-drama-foundation/design.md#已确认前提与首期取舍)
-- <a id="当前基线与复用判断"></a>[当前基线与复用判断](tasks/ai-drama-foundation/design.md#当前基线与复用判断)
-- <a id="跨层职责与依赖候选"></a>[跨层职责与依赖候选](tasks/ai-drama-foundation/design.md#跨层职责与依赖候选)
-- <a id="身份项目与扩展边界"></a>[身份、项目与扩展边界](tasks/ai-drama-foundation/design.md#身份项目与扩展边界)
-- <a id="数据与事务路线"></a>[数据与事务路线](tasks/ai-drama-foundation/design.md#数据与事务路线)
-- <a id="组件预设到实际消费者"></a>[组件预设到实际消费者](tasks/ai-drama-foundation/design.md#组件预设到实际消费者)
-- <a id="auth-与基础-http-的复用及护栏改进方案待评审"></a>[auth 与基础 HTTP 的复用及护栏改进方案（待评审）](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#auth-与基础-http-的复用及护栏改进方案待评审)
-- <a id="当前事实与改进目标"></a>[当前事实与改进目标](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#当前事实与改进目标)
-- <a id="抽取保留与后置清单"></a>[抽取、保留与后置清单](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#抽取保留与后置清单)
-- <a id="必须保留的差异"></a>[必须保留的差异](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#必须保留的差异)
-- <a id="后续业务怎样发现与使用"></a>[后续业务怎样发现与使用](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#后续业务怎样发现与使用)
-- <a id="接入现有护栏的具体位置"></a>[接入现有护栏的具体位置](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#接入现有护栏的具体位置)
-- <a id="验证有效性与停止标准"></a>[验证有效性与停止标准](tasks/ai-drama-foundation/auth-http-reuse-proposal.md#验证有效性与停止标准)
-- <a id="首个实现任务候选与验收"></a>[首个实现任务候选与验收](tasks/ai-drama-foundation/design.md#首个实现任务候选与验收)
-- <a id="护栏增量与后续任务"></a>[护栏增量与后续任务](tasks/ai-drama-foundation/design.md#护栏增量与后续任务)

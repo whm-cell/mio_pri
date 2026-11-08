@@ -40,12 +40,6 @@ import {
 import type { PublicResult } from '../scripts/harness/work/reports.ts';
 import type { CompactRecords } from '../scripts/harness/work/compact-store.ts';
 import {
-  historicalPath,
-  legacyFiles,
-  parseLegacyIndex,
-  parseReport,
-} from '../scripts/harness/work/legacy-reports.ts';
-import {
   digest,
   draft,
   initializeMember,
@@ -86,8 +80,9 @@ async function fixture(legacy = false) {
     'AGENTS.md': '# Development\n',
     'README.md': '[Documentation](docs/index.md)\n',
     'docs/index.md':
-      '[PRD](prd.md) [Other](other-prd.md) [API](api.md) [Foundation](foundation.md) [Acceptance](acceptance.md) [Coordination](coordination.md) [Records](work-records.md) [Results](tasks/index.md) [Tooling](engineering/work-tooling.md)\n',
-    'docs/engineering/work-tooling.md': '# Coordinating tools\n\n## v2 公共成果存储维护\n',
+      '[PRD](prd.md) [Other](other-prd.md) [API](api.md) [Foundation](foundation.md) [Acceptance](acceptance.md) [Coordination](coordination.md) [Records](work-records.md) [Results](tasks/index.md) [Tooling](engineering/work-tooling.md)\n\n## 增长与归属\n',
+    'docs/engineering/work-tooling.md':
+      '# Coordinating tools\n\n## 每份 PRD 的公共包\n\n## 写入、恢复与保留\n\n## v2 公共成果存储维护\n',
     'docs/api.md': '# API\n',
     'docs/foundation.md': '# Foundation\n',
     'docs/acceptance.md': '# Acceptance\n',
@@ -971,19 +966,27 @@ it('rejects malformed result targets and upgrades a reopened v1 task without tra
   expect((await results(root)).results[0]!.key).toBe('capability');
 });
 
-it('retains all ten original accepted packages and their immutable v1 index without private author data', async () => {
-  const source = await readFile(join(project, 'docs/tasks/history/index.md'), 'utf8');
-  expect(digest(source)).toBe('1cd60b5eec05e759e33cc4035d260dab56e1f51d73409d31ed1d2916e335193e');
-  const index = parseLegacyIndex(source);
-  expect(index.tasks).toHaveLength(10);
-  const files = await legacyFiles(project);
-  expect(files.size).toBe(46);
-  for (const entry of index.tasks) {
-    const bytes = await readFile(join(project, historicalPath(entry.report!.path)), 'utf8');
-    const report = parseReport(bytes);
-    expect(digest(bytes)).toBe(entry.report!.sha256);
-    expect(report.acceptance!.candidate).toBe(entry.report!.candidate);
+it('validates current accepted results and their complete public evidence', async () => {
+  const { index } = await readIndex(project);
+  const keys: string[] = [];
+  for (const { prd } of index.prds) {
+    const { book } = await readBook(project, prd, index);
+    for (const result of book.results) {
+      keys.push(result.key);
+      expect(result.acceptance!.candidate).toBe(result.version.candidate);
+      const artifacts = await resultFiles(project, result);
+      expect(result.evidence.map((entry) => entry.criterion).sort()).toEqual(
+        result.criteria.map((criterion) => criterion.id).sort(),
+      );
+      for (const entry of result.evidence)
+        expect(digest(artifacts[entry.path]!)).toBe(entry.sha256);
+    }
   }
+  expect(keys).toEqual(
+    expect.arrayContaining(['auth-registration-foundation', 'auth-http-shared-primitives']),
+  );
+  const { files } = await inventory(project, await loadConfig(project));
+  expect(await checkReports(project, files)).toEqual([]);
 });
 
 it('reads v2 public results and preserves old accepted identity through an uncommitted storage split and same-key repair', async () => {

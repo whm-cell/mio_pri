@@ -49,17 +49,15 @@ curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capa
 
 ## 日常维护
 
-使用能读取仓库指令、编辑文件和运行命令的 Agent 时，成员只需说“按这份 PRD 推进”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)定位任务并推进当前阶段：未完成先实施，缺证先验证；已交回且仍匹配的结果收到明确完成请求后执行 complete。对象或接受含义确实不明时，只问必要的短问题，成员无需提供 ID、哈希、命令或长提示词。协议与 CLI 随仓库提供；没有正在执行的 Agent 就不会自行推进。
+使用能读取仓库指令、编辑文件和运行命令的 Agent 时，成员只需说“按这份 PRD 推进”“先验证”或“让当前任务进入 complete”。Agent 按[短句意图与下一步](docs/coordination.md#短句意图与下一步)定位任务、核对授权和证据后推进；用户无需提供 ID、哈希或 JSON。协议与 CLI 随仓库提供，没有正在执行的 Agent 就不会自行推进。
 
 开发脚本按职责分为 `scripts/harness/`（工程护栏与任务协调）和 `scripts/service/`（Profile、启动、产物 smoke）。目录归属与开发模块依赖均由 `harness.config.json` 声明；`pnpm check` 组合公共检查与服务装载验证，生产代码保持独立。
 
 一般修改执行相关测试与检查，交付前运行 `pnpm check`。业务工具/权限变化必须测试真实执行链；接口变化更新同一份 API 契约。新增源文件自动继承所属模块规则，新模块需要在护栏配置中说明允许依赖。体量报告是审阅信号，不是自动拆分指令。
 
-源码任务自动登记 `quality-review`，Agent 在 verify 阶段实际审阅算法成本、未使用公共函数/方法和未复用的已有实现，再记录当前候选原件。交付缺少匹配审查不能通过；普通检查不会自行调用模型。判据与执行边界见 [验证协议](docs/coordination.md#验证与接受)。
+新目标从 `pnpm work guide start` 开始，原任务用 `status` 定位后取 `context`，记录阶段不代表现场已核验。编辑前建档并进入 C1，命令型实施经 `work exec`；源码质量审查与交回前三方对账按[验证协议](docs/coordination.md#验证与接受)执行。完整命令与字段查[记录索引](docs/work-records.md)。
 
-任务 C0/C1 记录位于隐藏的 `.work/tasks/<task-id>/state.json`。`pnpm work status` 分页定位任务，记录阶段不表示现场已核验；选中后用 `context`／`check` 核对，按返回入口展开必要字段和证据。命令型实施使用 `work exec` 检查 C1 条件，直接编辑仍遵守同一前置要求。开发能力以 `plan.result={prd,key}` 关联成果，证据齐全后 prepare 私有草稿，真实接受后 complete；维护验证后按需 archive。渐进读取和交付格式见[记录命令](docs/work-records.md)，成果从[同一 PRD 入口](docs/tasks/index.md)查找。
-
-公共资料统一在 `docs/`，需求、设计与候选维护在 `docs/tasks/`，其他现行规范按领域维护。`pnpm work documents` 列出注册类别、稳定身份、当前位置、兼容别名及发现问题，不改写资料。开发成果交付前按[规范核对](docs/coordination.md#验证与接受)声明 `plan.norms`，在 verify 前更新必要规范并审阅当前候选；complete 不自动从任务方案生成规范。
+公共资料的职责、稳定身份和增长规则见[资料导航](docs/index.md)，`pnpm work documents` 只读核对注册与入口。已接受成果从[所属 PRD](docs/tasks/index.md)按 key 读取，无需作者 `.work`。整理旧资料时，把仍有效的独有内容并入权威入口，核对必要证据和引用后删除被替代文档。
 
 公共协议、需求、源码、测试和检查配置入库；每人的 `.work/` 内容、运行资料 `.runtime/`、凭证 `.env*`、依赖与构建产物忽略。本地开发遵守统一记录协议；公共检查不要求任何成员的私人记录存在。忽略规则不提供备份或清除已跟踪内容，跨人交接需要单独提供代码与必要证据。
 

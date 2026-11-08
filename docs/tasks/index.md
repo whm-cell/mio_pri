@@ -8,8 +8,6 @@
 | ---------------------------------------------------------------- | ----------------------------------------------------- |
 | [docs/prd-ai-drama-foundation.md](../prd-ai-drama-foundation.md) | [已接受成果](complete/prd-5f1fa63bbcbb5049/report.md) |
 
-[历史护栏维护与交付依据](history/index.md)：保留当时的候选、接受和验证范围，不计入 PRD 开发进度。
-
 ```mio-prd-index
 {
   "version": 2,
@@ -18,13 +16,9 @@
       "prd": "docs/prd-ai-drama-foundation.md",
       "report": {
         "path": "docs/tasks/complete/prd-5f1fa63bbcbb5049/report.md",
-        "sha256": "362d700b26a2ad1b8db30ce59820eee3332de605f3daa240d27f9bc481a50146"
+        "sha256": "01c624a4d30ee30707d036fc7f48bd974f792a260de4ac7aeac7fdd3ae919217"
       }
     }
-  ],
-  "history": {
-    "path": "docs/tasks/history/index.md",
-    "sha256": "1cd60b5eec05e759e33cc4035d260dab56e1f51d73409d31ed1d2916e335193e"
-  }
+  ]
 }
 ```

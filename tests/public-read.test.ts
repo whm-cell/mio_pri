@@ -10,12 +10,16 @@ import { readPublicResult } from '../scripts/harness/work/public-read.ts';
 import { digest, json } from '../scripts/harness/work/records.ts';
 import {
   compactRecords,
+  evidenceRoot,
   readBook,
   readIndex,
+  renderBook,
   renderCompactBook,
   renderIndex,
+  renderResultPage,
   reportPath,
   resultFiles,
+  resultPath,
 } from '../scripts/harness/work/reports.ts';
 
 const project = resolve('.');
@@ -31,36 +35,41 @@ async function fixture(compact: boolean) {
   const catalog = await documentCatalog(project);
   const { index } = await readIndex(project);
   const prd = index.prds[0]!.prd;
-  const { book, source, details } = await readBook(project, prd, index);
+  const book = structuredClone((await readBook(project, prd, index)).book);
+  book.version = compact ? 4 : 3;
   const artifacts: Record<string, string> = {};
-  for (const result of book.results) Object.assign(artifacts, await resultFiles(project, result));
+  for (const result of book.results) {
+    const originals = await resultFiles(project, result);
+    for (const evidence of result.evidence) {
+      const bytes = originals[evidence.path]!;
+      evidence.path = compact
+        ? evidenceSelector(prd, result.key, evidence.criterion)
+        : `${evidenceRoot({ prd, key: result.key })}/${evidence.criterion}.md`;
+      artifacts[evidence.path] = bytes;
+    }
+  }
   const files: Record<string, string> = {
     'harness.config.json': json(catalog.config),
     'package.json': '{"type":"module"}\n',
-    'docs/tasks/index.md': renderIndex(index),
-    [reportPath(prd)]: source!,
-    ...details,
-    ...artifacts,
   };
   for (const entry of catalog.documents)
     for (const path of new Set([entry.identity, entry.path, ...(entry.aliases ?? [])]))
       files[path] = await readFile(join(project, path), 'utf8');
   if (compact) {
-    const converted = structuredClone(book);
-    converted.version = 4;
-    const compactArtifacts: Record<string, string> = {};
-    for (const result of converted.results)
-      for (const evidence of result.evidence) {
-        const bytes = artifacts[evidence.path]!;
-        evidence.path = evidenceSelector(prd, result.key, evidence.criterion);
-        compactArtifacts[evidence.path] = bytes;
-      }
-    const records = compactRecords(converted, compactArtifacts);
+    const records = compactRecords(book, artifacts);
     files[recordsPath(prd)] = json(records);
     files[reportPath(prd)] = renderCompactBook(records);
-    index.prds.find((entry) => entry.prd === prd)!.report.sha256 = digest(files[reportPath(prd)]!);
-    files['docs/tasks/index.md'] = renderIndex(index);
+  } else {
+    const details: Record<string, string> = {};
+    for (const result of book.results)
+      details[resultPath({ prd, key: result.key })] = renderResultPage(prd, result);
+    Object.assign(files, details, artifacts);
+    files[reportPath(prd)] = renderBook(book, details);
   }
+  files['docs/tasks/index.md'] = renderIndex({
+    version: 2,
+    prds: [{ prd, report: { path: reportPath(prd), sha256: digest(files[reportPath(prd)]!) } }],
+  });
   for (const [path, bytes] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), bytes);

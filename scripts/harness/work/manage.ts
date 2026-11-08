@@ -7,6 +7,7 @@ import { loadConfig } from '../inventory.ts';
 import { registerQualityReview } from './quality-review.ts';
 import { documentCatalog, resolveDocument, resolvePrd } from '../task-documents.ts';
 import { registerNormsReview } from './norms-review.ts';
+import { withTaskCommand } from './command.ts';
 
 const planFields = [
   'result',
@@ -71,43 +72,45 @@ export async function ensureTask(root: string, raw: string) {
   parseTask(json(proposed));
   const origin = proposed.plan.requirement!;
   const id = `${origin.key.slice(0, 48)}-${digest(json([origin.source, origin.key])).slice(0, 16)}`;
-  const actor = await initializeMember(root);
-  let existing;
-  try {
-    existing = await loadTask(root, id);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  if (existing) {
-    const compared = { ...existing.task.plan, ...patch };
-    registerQualityReview(compared, await loadConfig(root));
-    registerNormsReview(compared);
-    if (
-      !isDeepStrictEqual(existing.task.plan.requirement, origin) ||
-      Object.entries(patch).some(
-        ([key]) =>
-          !isDeepStrictEqual(
-            existing.task.plan[key as keyof TaskPlan],
-            compared[key as keyof TaskPlan],
-          ),
+  return withTaskCommand(root, id, 'ensure', async () => {
+    const actor = await initializeMember(root);
+    let existing;
+    try {
+      existing = await loadTask(root, id);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    if (existing) {
+      const compared = { ...existing.task.plan, ...patch };
+      registerQualityReview(compared, await loadConfig(root));
+      registerNormsReview(compared);
+      if (
+        !isDeepStrictEqual(existing.task.plan.requirement, origin) ||
+        Object.entries(patch).some(
+          ([key]) =>
+            !isDeepStrictEqual(
+              existing.task.plan[key as keyof TaskPlan],
+              compared[key as keyof TaskPlan],
+            ),
+        )
       )
-    )
-      throw new Error(`WORK_CONFLICT: inspect ${id}; use update with its current revision`);
-    return { created: false, ...(await inspectTask(root, existing.task, existing.raw)) };
-  }
-  if (typeof patch.goal !== 'string' || !patch.goal.trim())
-    throw new Error(
-      'WORK_REQUEST: new tasks require plan.goal; use status to locate existing work',
-    );
-  const task = draft(root, actor, id, '');
-  Object.assign(task.plan, patch, { requirement: origin });
-  if (task.plan.result) task.delivery = { version: 2 };
-  registerQualityReview(task.plan, await loadConfig(root));
-  registerNormsReview(task.plan);
-  task.checkpoint = await capture(root, task);
-  if (!contractIssues(task).length) task.stage = 'C0_READY';
-  await saveTask(root, task);
-  return { created: true, ...(await inspectTask(root, task, json(task))) };
+        throw new Error(`WORK_CONFLICT: inspect ${id}; use update with its current revision`);
+      return { created: false, ...(await inspectTask(root, existing.task, existing.raw)) };
+    }
+    if (typeof patch.goal !== 'string' || !patch.goal.trim())
+      throw new Error(
+        'WORK_REQUEST: new tasks require plan.goal; use status to locate existing work',
+      );
+    const task = draft(root, actor, id, '');
+    Object.assign(task.plan, patch, { requirement: origin });
+    if (task.plan.result) task.delivery = { version: 2 };
+    registerQualityReview(task.plan, await loadConfig(root));
+    registerNormsReview(task.plan);
+    task.checkpoint = await capture(root, task);
+    if (!contractIssues(task).length) task.stage = 'C0_READY';
+    await saveTask(root, task);
+    return { created: true, ...(await inspectTask(root, task, json(task))) };
+  });
 }
 
 /** Agent assertions may update the plan and progress, never ownership, evidence or human acceptance. */

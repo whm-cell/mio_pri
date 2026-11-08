@@ -6,6 +6,7 @@ import type { Task } from './records.ts';
 import { bookPaths, readBook, readIndex } from './reports.ts';
 import { draft } from './records.ts';
 import { documentCatalog, resolveDocument, resultDocument } from '../task-documents.ts';
+import { withTaskCommand } from './command.ts';
 
 /** A portable proposal plus candidate manifest; local authority and evidence never transfer implicitly. */
 export async function handoff(root: string, task: Task) {
@@ -121,7 +122,7 @@ export async function receive(root: string, source: string, key?: string) {
     task.notes.push(
       `Read accepted result ${source}#${result.key}; candidate label ${result.acceptance.candidate}. Entry points: ${result.locations.map((entry) => entry.path).join(', ')}. Public summaries cannot restore code or evidence and are not current verification.`,
     );
-    await saveTask(root, task);
+    await withTaskCommand(root, task.plan.id, 'receive', () => saveTask(root, task));
     return task;
   }
   const blocks = [...markdown.matchAll(/^```mio-work-handoff\r?\n([\s\S]*?)^```\s*$/gm)];
@@ -154,6 +155,6 @@ export async function receive(root: string, source: string, key?: string) {
       `Received ${source} from ${incoming.member}; verified file manifest ${incoming.checkpoint.candidate}; source HEAD ${incoming.checkpoint.head ?? 'unborn'}. Reconcile local authority and retrieve required raw evidence.`,
     ],
   };
-  await saveTask(root, task);
+  await withTaskCommand(root, task.plan.id, 'receive', () => saveTask(root, task));
   return task;
 }

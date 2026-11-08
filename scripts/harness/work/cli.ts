@@ -1,6 +1,5 @@
-import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   addEvidence,
@@ -25,6 +24,8 @@ import { readOptions } from './read-options.ts';
 import { readStatus } from './read-status.ts';
 import { assessmentOutput, inspectionOutput, readTask } from './read-task.ts';
 import { readPublicResult } from './public-read.ts';
+import { runCommand, withTaskCommand } from './command.ts';
+import type { CommandActivity } from './command.ts';
 import {
   checkedPath,
   digest,
@@ -72,7 +73,7 @@ async function input() {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function main() {
+async function main(activity?: CommandActivity) {
   if (!command || command === 'help') return console.log(help);
   // Commands are a repository development tool, never a product-runtime dependency.
   await readFile(await checkedPath(root, 'harness.config.json'));
@@ -202,11 +203,11 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    const outcome = spawnSync(args[2]!, args.slice(3), { cwd: root, stdio: 'inherit' });
+    const outcome = await runCommand(root, args.slice(2), 'inherit', activity!);
     if (outcome.error) throw outcome.error;
-    process.exitCode = outcome.status ?? 1;
+    process.exitCode = outcome.cancelled || outcome.unsettled ? 1 : (outcome.status ?? 1);
     console.log(
-      `Implementation command exited ${outcome.status}; inspect changes before work sync.`,
+      `Implementation command exited ${outcome.status}${outcome.cancelled ? '; interrupted' : ''}${outcome.unsettled ? '; execution group not confirmed stopped' : ''}; inspect changes before work sync.`,
     );
     return;
   }
@@ -306,9 +307,9 @@ async function main() {
     await log.write(
       `${json({ argv, candidate: state.candidate, environment: environment(), started: new Date().toISOString() })}\n`,
     );
-    outcome = spawnSync(argv[0]!, argv.slice(1), { cwd: root, stdio: ['ignore', log.fd, log.fd] });
+    outcome = await runCommand(root, argv, ['ignore', log.fd, log.fd], activity!);
     await log.write(
-      `\n${json({ exitCode: outcome.status, signal: outcome.signal, error: outcome.error?.message })}`,
+      `\n${json({ exitCode: outcome.status, signal: outcome.signal, error: outcome.error?.message, cancelled: outcome.cancelled, unsettled: outcome.unsettled })}`,
     );
   } finally {
     await log.close();
@@ -322,26 +323,61 @@ async function main() {
   } catch (error) {
     contextError = error instanceof Error ? error.message : String(error);
   }
-  const passed = outcome.status === 0 && !outcome.error && !changed;
+  const passed =
+    outcome.status === 0 && !outcome.error && !outcome.cancelled && !outcome.unsettled && !changed;
+  let evidencePath = relative;
+  if (outcome.unsettled) {
+    // Descendants may still append to their inherited log fd. Bind an immutable observation,
+    // not the provisional log, and let pending evidence invalidate any earlier pass.
+    evidencePath = `${relative}.pending.json`;
+    await writeFile(
+      await checkedPath(root, evidencePath),
+      json({
+        candidate: state.candidate,
+        argv,
+        environment: environment(),
+        exitCode: outcome.status,
+        signal: outcome.signal,
+        rawLog: relative,
+        result: 'pending',
+        cancelled: outcome.cancelled,
+        reason: 'Execution is not confirmed stopped; rawLog is provisional and may still change.',
+      }),
+      { flag: 'wx' },
+    );
+  }
   addEvidence(task, {
     criterion: criterion.id,
     method: 'automated',
-    result: changed ? 'pending' : passed ? 'pass' : 'fail',
-    artifact: relative,
-    sha256: digest(await readFile(path)),
+    result: changed || outcome.unsettled ? 'pending' : passed ? 'pass' : 'fail',
+    artifact: evidencePath,
+    sha256: digest(await readFile(await checkedPath(root, evidencePath))),
     candidate: state.candidate,
-    summary: `${json(argv).trim()}; exit ${outcome.status}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
+    summary: `${json(argv).trim()}; exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
     environment: environment(),
   });
   await saveTask(root, task, raw);
   console.log(
-    `${passed ? 'PASS' : 'NOT PASSED'}: ${relative}${changed ? '; WORK_CONTEXT_CHANGED during command' : ''}`,
+    `${passed ? 'PASS' : 'NOT PASSED'}: ${evidencePath}${changed ? '; WORK_CONTEXT_CHANGED during command' : ''}`,
   );
   if (!passed) process.exitCode = 1;
 }
 
 try {
-  await main();
+  const writesTask = [
+    'start',
+    'update',
+    'deliver',
+    'exec',
+    'sync',
+    'archive',
+    'run',
+    'evidence',
+    'handoff',
+  ];
+  if (command && args[0] && writesTask.includes(command))
+    await withTaskCommand(root, args[0], command, main);
+  else await main();
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   if (Buffer.byteLength(message) <= 4096) console.error(message);

@@ -16,13 +16,54 @@ import { afterEach, expect, it } from 'vitest';
 import type { Task } from '../scripts/harness/work/records.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
 import { artifact } from '../scripts/harness/work/context.ts';
+import { withTaskCommand } from '../scripts/harness/work/command.ts';
 
 const project = resolve('.');
 const cli = join(project, 'scripts/harness/work/cli.ts');
 const scratch: string[] = [];
+const commands: ReturnType<typeof begin>[] = [];
 afterEach(async () => {
+  for (const command of commands.splice(0)) {
+    const marker = await readFile(
+      join(command.root, `.work/tasks/${command.id}.command.json`),
+      'utf8',
+    )
+      .then((raw) => JSON.parse(raw) as { pid: number; child?: number })
+      .catch(() => null);
+    if (marker?.pid === command.child.pid && marker?.child && process.platform !== 'win32') {
+      try {
+        process.kill(-marker.child, 'SIGKILL');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    }
+    if (command.child.exitCode === null && command.child.signalCode === null)
+      command.child.kill('SIGKILL');
+    await command.finished;
+  }
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
+
+function begin(root: string, args: string[]) {
+  const child = spawn(process.execPath, [cli, ...args], {
+    cwd: root,
+    env: { PATH: process.env.PATH ?? '' },
+    timeout: 10000,
+  });
+  let output = '';
+  child.stdout.on('data', (bytes: Buffer) => {
+    output += bytes.toString();
+  });
+  child.stderr.on('data', (bytes: Buffer) => {
+    output += bytes.toString();
+  });
+  const finished = new Promise<{ status: number | null; output: string }>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (status) => resolve({ status, output }));
+  });
+  child.stdin.end();
+  return { root, id: args[1]!, child, finished };
+}
 
 async function fixture(actor = 'alice') {
   const root = await mkdtemp(join(tmpdir(), 'mio-work-'));
@@ -99,6 +140,261 @@ async function implementing(root: string) {
   });
   expect(result.status, result.output).toBe(0);
 }
+
+it('rejects competing task writes before launching them while reads and another task continue', async () => {
+  const root = await fixture();
+  await ready(root);
+  await implementing(root);
+  await ready(root, 'second');
+  const handoff = invoke(root, ['handoff', 'probe']);
+  expect(handoff.status, handoff.output).toBe(0);
+  await mkdir(join(root, '.work/inbox'));
+  await cp(handoff.output, join(root, '.work/inbox/probe.md'));
+  const before = await readFile(statePath(root), 'utf8');
+  const revision = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output).revision;
+  const script =
+    'const fs=require("node:fs");fs.writeFileSync(".work/started","ready");setInterval(()=>{if(fs.existsSync(".work/finish"))process.exit(0)},20)';
+  const running = begin(root, ['run', 'probe', 'checks', '--', process.execPath, '-e', script]);
+  commands.push(running);
+  await expect
+    .poll(() => readFile(join(root, '.work/started'), 'utf8').catch(() => ''))
+    .toBe('ready');
+  const write = [
+    process.execPath,
+    '-e',
+    'require("node:fs").writeFileSync(".work/forbidden","bad")',
+  ];
+  for (const args of [
+    ['exec', 'probe', '--', ...write],
+    ['run', 'probe', 'checks', '--', ...write],
+    ['sync', 'probe', 'Must not sync a running check.'],
+    ['archive', 'probe', 'Must not archive.'],
+    ['evidence', 'probe', 'quality-review', 'pass', 'missing.md', 'Must not register.'],
+    ['handoff', 'probe'],
+    ['receive', '.work/inbox/probe.md'],
+  ])
+    expect(invoke(root, args).output).toContain('WORK_BUSY');
+  expect(
+    invoke(root, ['update', 'probe', '--stdin'], {
+      revision,
+      reason: 'Competing update.',
+      plan: { nextAction: 'wrong' },
+    }).output,
+  ).toContain('WORK_BUSY');
+  expect(invoke(root, ['deliver', 'probe', '--stdin'], { action: 'prepare' }).output).toContain(
+    'WORK_BUSY',
+  );
+  expect(await readFile(statePath(root), 'utf8')).toBe(before);
+  await expect(readFile(join(root, '.work/forbidden'))).rejects.toHaveProperty('code', 'ENOENT');
+  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+  for (const args of [
+    ['check', 'probe'],
+    ['context', 'probe', 'resume'],
+    ['read', 'probe', 'task'],
+    ['status'],
+  ])
+    expect(invoke(root, args).status).toBe(0);
+  expect(
+    invoke(root, [
+      'run',
+      'second',
+      'checks',
+      '--',
+      process.execPath,
+      '-e',
+      'console.log("independent")',
+    ]).status,
+  ).toBe(0);
+  await writeFile(join(root, '.work/finish'), 'finish');
+  const result = await running.finished;
+  expect(result.status, result.output).toBe(0);
+  expect((await state(root)).evidence).toHaveLength(1);
+  expect((await state(root)).evidence[0]!.result).toBe('pass');
+  await expect(readFile(join(root, '.work/tasks/probe.command.json'))).rejects.toHaveProperty(
+    'code',
+    'ENOENT',
+  );
+});
+
+it('never turns cancellation into a pass even when the child handles SIGTERM by exiting zero', async () => {
+  const root = await fixture();
+  await ready(root);
+  const script =
+    'const fs=require("node:fs");process.on("SIGTERM",()=>process.exit(0));setInterval(()=>{},100);fs.writeFileSync(".work/started","ready")';
+  const running = begin(root, ['run', 'probe', 'checks', '--', process.execPath, '-e', script]);
+  commands.push(running);
+  await expect
+    .poll(() => readFile(join(root, '.work/started'), 'utf8').catch(() => ''))
+    .toBe('ready');
+  running.child.kill('SIGTERM');
+  const result = await running.finished;
+  expect(result.status, result.output).toBe(1);
+  const evidence = (await state(root)).evidence[0]!;
+  expect(evidence.result).toBe(process.platform === 'win32' ? 'pending' : 'fail');
+  const log = await readFile(join(root, evidence.artifact), 'utf8');
+  expect(log).toContain('"cancelled": true');
+  if (process.platform !== 'win32') {
+    expect(log).toContain('"exitCode": 0');
+    await expect(readFile(join(root, '.work/tasks/probe.command.json'))).rejects.toHaveProperty(
+      'code',
+      'ENOENT',
+    );
+    expect(run(root).status).toBe(0);
+  }
+});
+
+it.skipIf(process.platform === 'win32')(
+  'retains occupancy when a same-group descendant outlives its cancelled leader',
+  async () => {
+    const root = await fixture();
+    await ready(root);
+    expect(run(root).status).toBe(0);
+    const descendant =
+      'const fs=require("node:fs");process.on("SIGTERM",()=>fs.writeFileSync(".work/signalled","yes"));setInterval(()=>console.log("late output"),20);fs.writeFileSync(".work/descendant","ready")';
+    const script = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit'});process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},100)`;
+    const running = begin(root, ['run', 'probe', 'checks', '--', process.execPath, '-e', script]);
+    commands.push(running);
+    await expect
+      .poll(() => readFile(join(root, '.work/descendant'), 'utf8').catch(() => ''))
+      .toBe('ready');
+    running.child.kill('SIGTERM');
+    const result = await running.finished;
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain('WORK_CHILD_ACTIVE');
+    expect(await readFile(join(root, '.work/signalled'), 'utf8')).toBe('yes');
+    const evidence = (await state(root)).evidence.at(-1)!;
+    expect(evidence.result).toBe('pending');
+    const observation = JSON.parse(await readFile(join(root, evidence.artifact), 'utf8'));
+    const length = (await readFile(join(root, observation.rawLog))).length;
+    await expect
+      .poll(async () => (await readFile(join(root, observation.rawLog))).length)
+      .toBeGreaterThan(length);
+    expect(
+      JSON.parse(invoke(root, ['check', 'probe']).output).evidence.find(
+        (entry: { criterion: string }) => entry.criterion === 'checks',
+      ).result,
+    ).toBe('pending');
+    expect(invoke(root, ['sync', 'probe', 'Do not clear an active group.']).output).toContain(
+      'WORK_BUSY',
+    );
+    expect(
+      JSON.parse(await readFile(join(root, '.work/tasks/probe.command.json'), 'utf8')).child,
+    ).toBeGreaterThan(0);
+  },
+);
+
+it.skipIf(process.platform === 'win32')(
+  'keeps an interrupted marker after SIGKILL instead of stealing it by pid or age',
+  async () => {
+    const root = await fixture();
+    await ready(root);
+    const running = begin(root, [
+      'run',
+      'probe',
+      'checks',
+      '--',
+      process.execPath,
+      '-e',
+      'setInterval(()=>{},100);require("node:fs").writeFileSync(".work/started","ready")',
+    ]);
+    commands.push(running);
+    await expect
+      .poll(() => readFile(join(root, '.work/started'), 'utf8').catch(() => ''))
+      .toBe('ready');
+    running.child.kill('SIGKILL');
+    await running.finished;
+    const path = join(root, '.work/tasks/probe.command.json');
+    const marker = await readFile(path, 'utf8');
+    expect(
+      invoke(root, ['run', 'probe', 'checks', '--', process.execPath, '-e', 'process.exit(0)'])
+        .output,
+    ).toContain('WORK_BUSY');
+    expect(await readFile(path, 'utf8')).toBe(marker);
+    expect((await state(root)).evidence).toHaveLength(0);
+    expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+    expect(invoke(root, ['context', 'probe', 'resume']).status).toBe(0);
+  },
+);
+
+it('applies occupancy to ensure and does not mistake a retained marker for a task stage', async () => {
+  const root = await fixture();
+  const created = invoke(root, ['ensure', '--stdin'], proposal());
+  const id = JSON.parse(created.output).task.id as string;
+  const before = await readFile(statePath(root, id), 'utf8');
+  await writeFile(
+    join(root, `.work/tasks/${id}.command.json`),
+    '{"pid":0,"command":"interrupted"}',
+  );
+  expect(invoke(root, ['ensure', '--stdin'], proposal()).output).toContain('WORK_BUSY');
+  expect(await readFile(statePath(root, id), 'utf8')).toBe(before);
+  expect(invoke(root, ['check', id]).status).toBe(0);
+});
+
+it('keeps shell redirection inside the checked subprocess and releases occupancy after launch errors', async () => {
+  const root = await fixture();
+  await ready(root);
+  const args = [
+    'exec',
+    'probe',
+    '--',
+    'sh',
+    '-c',
+    'printf "%s\\n" "export const value = 2;" > src/value.ts',
+  ];
+  const before = await readFile(join(root, 'src/value.ts'), 'utf8');
+  expect(invoke(root, args).output).toContain('WORK_EXEC_STAGE');
+  expect(await readFile(join(root, 'src/value.ts'), 'utf8')).toBe(before);
+  await implementing(root);
+  expect(invoke(root, ['exec', 'probe', '--', 'mio-command-does-not-exist']).status).toBe(1);
+  await expect(readFile(join(root, '.work/tasks/probe.command.json'))).rejects.toHaveProperty(
+    'code',
+    'ENOENT',
+  );
+  expect(invoke(root, args).status).toBe(0);
+  expect(await readFile(join(root, 'src/value.ts'), 'utf8')).toBe('export const value = 2;\n');
+});
+
+it('keeps pre-record occupancy and retained markers outside task listings', async () => {
+  const root = await fixture();
+  // A failed first action must not remove the shared container another opener may be using.
+  await expect(
+    withTaskCommand(root, 'not-created', 'start', async () => {
+      throw new Error('initialization failed before state');
+    }),
+  ).rejects.toThrow('initialization failed before state');
+  expect(await readdir(join(root, '.work/tasks'))).toEqual([]);
+  await ready(root);
+  let release!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const operation = withTaskCommand(root, 'new-task', 'ensure', () => finished);
+  const marker = join(root, '.work/tasks/new-task.command.json');
+  try {
+    await expect.poll(() => readFile(marker, 'utf8').catch(() => '')).toContain('ensure');
+    await expect(readdir(join(root, '.work/tasks/new-task'))).rejects.toHaveProperty(
+      'code',
+      'ENOENT',
+    );
+    const listed = invoke(root, ['status']);
+    expect(listed.status, listed.output).toBe(0);
+    expect(JSON.parse(listed.output).tasks.map((task: { id: string }) => task.id)).toEqual([
+      'probe',
+    ]);
+  } finally {
+    release();
+    await operation;
+  }
+  // The same surviving marker after a hard stop creates no fake record or empty task directory.
+  await writeFile(marker, '{"pid":0,"command":"interrupted initialization"}');
+  expect(invoke(root, ['status', '--query', 'probe']).status).toBe(0);
+  expect(invoke(root, ['start', 'new-task', 'Resume initialization']).output).toContain(
+    'WORK_BUSY',
+  );
+  await rm(marker);
+  expect(invoke(root, ['start', 'new-task', 'Resume initialization']).status).toBe(0);
+  expect(JSON.parse(invoke(root, ['status']).output).tasks).toHaveLength(2);
+});
 
 function run(root: string, script = 'console.log("observed probe")', id = 'probe') {
   return invoke(root, ['run', id, 'checks', '--', process.execPath, '-e', script]);

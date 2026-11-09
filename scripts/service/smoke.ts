@@ -38,6 +38,7 @@ try {
   const packed = join(scratch, 'package');
   await assert.rejects(access(join(packed, 'src')));
   await assert.rejects(access(join(packed, '.work')));
+  await assert.rejects(access(join(packed, 'tests')));
   // Reuse the frozen installed dependency tree, never the plugin source directory.
   await symlink(join(project, 'node_modules'), join(packed, 'node_modules'), 'dir');
   const home = join(scratch, 'home');

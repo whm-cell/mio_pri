@@ -7,7 +7,9 @@
 | 使用 PostgreSQL，调整驱动、连接资源或隔离测试        | [PostgreSQL](postgres.md)；认证配置与迁移另见[认证底座](../auth.md) | [认证服务](../../src/auth/service.ts)、[认证迁移](../../scripts/service/migrate-auth.ts)、[测试数据库](../../tests/auth-database.ts) |
 | 使用 Redis，调整连接、命令、资源策略或首个限流消费者 | [Redis](redis.md)；业务规则见[认证底座](../auth.md#限流存储与恢复)  | [公共资源](../../src/integrations/redis.ts)、[认证消费者](../../src/auth/rate-limit.ts)、[插件装配](../../src/plugin.ts)             |
 
-Redis 的需求与采用决定见[接入 PRD](../tasks/auth-rate-limit-redis/prd.md)，结果接受仍沿所属成果入口核对。FFmpeg、LLM 和供应商契约随各自实际接入建立，不预建空页面或目录。
+DSH Agent/Session/原生持久化的采用与约束见 [DSH 内核](dsh.md)，实际入口是[受控内核](../../src/dsh/kernel.ts)和[正式 Profile](../../cordis.patch.yml)。
+
+Redis 的需求与采用决定见[接入 PRD](../tasks/auth-rate-limit-redis/prd.md)，结果接受仍沿所属成果入口核对。FFmpeg 和具体模型供应商契约随实际接入建立，不预建空页面或目录。
 
 ## 内容与职责
 

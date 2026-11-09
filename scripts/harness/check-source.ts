@@ -204,23 +204,29 @@ export async function checkSource(root: string, files: readonly string[], harnes
           `REDIS_DIRECTION ${file}: public Redis must not depend on consumers or tooling`,
         );
       const authPackage = [specifier.split('/')[0], resolved?.packageId?.name, packageName].some(
-        (name) =>
-          name === 'better-auth' ||
-          name === 'pg' ||
-          name === '@types/pg' ||
-          name?.startsWith('@better-auth/'),
+        (name) => name === 'better-auth' || name?.startsWith('@better-auth/'),
       );
-      if ((authPackage || specifier.startsWith('@better-auth/')) && !beneath(file, 'src/auth'))
+      const databasePackage = [
+        specifier.split('/')[0],
+        resolved?.packageId?.name,
+        packageName,
+      ].some((name) => name === 'pg' || name === '@types/pg');
+      const conversationDatabase =
+        file === 'src/conversations/store.ts' || file === 'src/conversations/schema.ts';
+      if (
+        ((authPackage || specifier.startsWith('@better-auth/')) && !beneath(file, 'src/auth')) ||
+        (databasePackage && !beneath(file, 'src/auth') && !conversationDatabase)
+      )
         errors.push(
-          `AUTH_ADAPTER ${file}: authentication and database packages belong in src/auth`,
+          `AUTH_ADAPTER ${file}: authentication belongs in src/auth; PostgreSQL also permits conversation store/schema`,
         );
-      if (file !== 'src/plugin.ts') {
+      if (file !== 'src/plugin.ts' && !beneath(file, 'src/dsh')) {
         if (
           specifier.startsWith('@deepseek-ai/') ||
           resolved?.packageId?.name.startsWith('@deepseek-ai/') ||
           packageName?.startsWith('@deepseek-ai/')
         )
-          errors.push(`DSH_BOUNDARY ${file}: framework access belongs in src/plugin.ts`);
+          errors.push(`DSH_BOUNDARY ${file}: framework access belongs in src/plugin.ts or src/dsh`);
       }
       if (/^(?:node:)?(?:child_process|fs|vm|worker_threads|module)(?:\/|$)/.test(specifier)) {
         errors.push(`RUNTIME_CAPABILITY ${file}: ${specifier} needs an explicit reviewed boundary`);

@@ -12,6 +12,42 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
+it.each([
+  ['src/conversations/store.ts', 0],
+  ['src/conversations/schema.ts', 0],
+  ['src/conversations/service.ts', 1],
+  ['src/conversations-extra/store.ts', 1],
+] as const)(
+  'limits conversation PostgreSQL imports to the two reviewed adapters: %s',
+  async (file, status) => {
+    const root = await fixture({ [file]: "export type { PoolConfig } from 'pg';" });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const result = check(root);
+    expect(result.status, result.output).toBe(status);
+    if (status) expect(result.output).toContain('AUTH_ADAPTER');
+  },
+);
+
+it.each([
+  ['database-alias', 'pg', 0],
+  ['pg', 'better-auth', 1],
+] as const)(
+  'keeps package identity checks behind conversation database aliases: %s -> %s',
+  async (alias, target, status) => {
+    const root = await fixture({
+      'src/conversations/store.ts': `import type * as Driver from '${alias}'; export type Value = typeof Driver;`,
+    });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const configPath = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.compilerOptions.paths = { [alias]: [createRequire(import.meta.url).resolve(target)] };
+    await writeFile(configPath, JSON.stringify(config));
+    const result = check(root);
+    expect(result.status, result.output).toBe(status);
+    if (status) expect(result.output).toContain('AUTH_ADAPTER');
+  },
+);
+
 async function fixture(extra: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'mio-guard-'));
   scratch.push(root);
@@ -174,7 +210,7 @@ it.each([
   expect(result.output).toContain(diagnostic);
 });
 
-it.each(['src/other.ts', 'src/plugin.ts'])(
+it.each(['src/other.ts', 'src/plugin.ts', 'src/dsh/kernel.ts', 'src/dsh-other/kernel.ts'])(
   'checks a valid framework paths alias in %s and preserves local aliases and import-like text',
   async (file) => {
     const root = await fixture({
@@ -203,8 +239,9 @@ export const documentation = "import '@deepseek-ai/not-a-package'";`,
       diagnostics.map((item) => ts.flattenDiagnosticMessageText(item.messageText, '\n')),
     ).toEqual([]);
     const result = check(root);
-    expect(result.status, result.output).toBe(file === 'src/plugin.ts' ? 0 : 1);
-    if (file !== 'src/plugin.ts') expect(result.output).toContain(`DSH_BOUNDARY ${file}`);
+    const allowed = file === 'src/plugin.ts' || file === 'src/dsh/kernel.ts';
+    expect(result.status, result.output).toBe(allowed ? 0 : 1);
+    if (!allowed) expect(result.output).toContain(`DSH_BOUNDARY ${file}`);
   },
 );
 

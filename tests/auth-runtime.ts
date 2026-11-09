@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, readdir, rm, symlink } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,7 +11,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { launcher, prepareProfile } from '../scripts/service/profile.ts';
 
 /** Real official Profile, packed dist only, fixed port/secret/DB across controlled stops. */
-export async function packedAuthRuntime(databaseURL: string, redisURL: string, namespace: string) {
+export async function packedAuthRuntime(
+  databaseURL: string,
+  redisURL: string,
+  namespace: string,
+  options: { conversations?: boolean; modelFixture?: boolean } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), 'mio-redis-profile-'));
   const command = (bin: string, args: string[]) => {
     const result = spawnSync(bin, args, { encoding: 'utf8', timeout: 60000 });
@@ -37,6 +42,21 @@ export async function packedAuthRuntime(databaseURL: string, redisURL: string, n
   await symlink(resolve('node_modules'), join(packed, 'node_modules'), 'dir');
   const home = join(directory, 'home');
   await prepareProfile(home, packed);
+  if (options.modelFixture) {
+    const fixture = join(directory, 'model-fixture');
+    await mkdir(fixture);
+    await cp(resolve('tests/conversations-model-plugin.ts'), join(fixture, 'index.ts'));
+    await writeFile(
+      join(fixture, 'package.json'),
+      JSON.stringify({ name: '@mio/test-provider', type: 'module', exports: './index.ts' }),
+    );
+    await symlink(resolve('node_modules'), join(fixture, 'node_modules'), 'dir');
+    await symlink(fixture, join(home, 'profiles/mio/node_modules/@mio/test-provider'), 'dir');
+    await writeFile(
+      join(home, 'profiles/mio/cordis.patch.yml'),
+      JSON.stringify([{ insert: [{ id: 'test-provider', name: '@mio/test-provider' }] }]),
+    );
+  }
   const probe = createServer();
   probe.listen(0, '127.0.0.1');
   await once(probe, 'listening');
@@ -88,6 +108,10 @@ export async function packedAuthRuntime(databaseURL: string, redisURL: string, n
           MIO_AUTH_RATE_LIMIT_BACKEND: backend,
           MIO_REDIS_URL: redisURL,
           MIO_REDIS_NAMESPACE: namespace,
+          ...(options.conversations ? { MIO_CONVERSATIONS_DATABASE_URL: databaseURL } : {}),
+          ...(options.modelFixture
+            ? { MIO_MODEL_PROVIDER: 'mio-test-only', MIO_MODEL: 'scripted' }
+            : {}),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -112,6 +136,12 @@ export async function packedAuthRuntime(databaseURL: string, redisURL: string, n
       throw new Error(`Profile not ready: ${output}`);
     },
     stop,
+    async crash() {
+      assert(child && child.exitCode === null && child.signalCode === null);
+      const exited = once(child, 'exit');
+      child.kill('SIGKILL');
+      await exited;
+    },
     async close() {
       try {
         await stop();

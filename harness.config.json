@@ -7,7 +7,12 @@
   },
   "developmentDependencies": {
     "scripts/harness": ["scripts/harness"],
-    "scripts/service": ["scripts/service", "src/auth/config.ts"]
+    "scripts/service": [
+      "scripts/service",
+      "src/auth/config.ts",
+      "src/conversations/config.ts",
+      "src/conversations/schema.ts"
+    ]
   },
   "documentRoots": ["README.md", "AGENTS.md", "docs"],
   "privateRoots": [".work", ".runtime"],

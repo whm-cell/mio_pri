@@ -1,6 +1,6 @@
 # Foundation HTTP 契约
 
-[API 领域导航](index.md)。基础 Profile 提供以下探针与能力查询；没有业务会话、消息、生成任务、流式事件或文件接口。认证路由和用户身份见[认证域](auth.md)。
+[API 领域导航](index.md)。本域提供探针与服务凭据能力查询；账号与可选对话分别见[认证域](auth.md)和[对话域](conversations.md)，不从本域服务 token 推导用户授权。生成任务与文件接口未实现。
 
 ## 本域共同约定
 
@@ -44,7 +44,7 @@
 
 输入：无正文；存在 Origin 时遵循本域精确白名单。
 
-成功：200：`{"apiVersion":"v1","stage":"foundation","tools":[],"sessions":false}`。
+成功：200：`{"apiVersion":"v1","stage":"foundation","tools":[],"sessions":false}`；显式配置并装载本地对话入口时 sessions 为 true，它不表示真实模型可用或生产接受。
 
 错误：遵循本域错误体；Origin 不允许为 403，已知路由方法不支持为 405；能力查询凭据缺失或不符为 401。未知 mio API 为 404。
 

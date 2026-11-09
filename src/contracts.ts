@@ -3,7 +3,7 @@ export interface Capabilities {
   apiVersion: 'v1';
   stage: 'foundation';
   tools: readonly string[];
-  sessions: false;
+  sessions: boolean;
 }
 
 export interface ApiError {

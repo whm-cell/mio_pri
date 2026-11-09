@@ -9,6 +9,12 @@ import { createAuthentication } from './auth/service.ts';
 import { createAuthHandler } from './auth/http.ts';
 import { createRedisRateLimit } from './auth/rate-limit.ts';
 import { createRedisResource, readRedisConfig } from './integrations/redis.ts';
+import { denyModelTools } from './dsh/policy.ts';
+import { readConversationConfig } from './conversations/config.ts';
+import { createConversationStore } from './conversations/store.ts';
+import { createConversationService } from './conversations/service.ts';
+import { createConversationHandler } from './conversations/http.ts';
+import { createDshConversationEngine } from './dsh/conversations.ts';
 
 export const name = 'mio-foundation';
 export const inject = ['webServer', 'tools'];
@@ -25,17 +31,19 @@ export const Config = z.object({
 
 /** Mount foundation and configured account routes. No model-facing tool is authorized. */
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  // Deny before awaiting optional dependencies, including when authentication startup fails.
+  denyModelTools(ctx);
+  const authConfig = readAuthConfig();
+  const conversationConfig = readConversationConfig();
   const handler = createHandler({
     token: process.env[config.tokenEnv] ?? '',
     allowedOrigins: config.allowedOrigins,
     instanceId: randomUUID(),
+    sessions: Boolean(conversationConfig),
   });
 
-  // Deny before awaiting optional dependencies, including when authentication startup fails.
-  ctx.tools.guard(
-    () => 'MIO_TOOL_DENIED: no business tool is authorized in the foundation profile',
-  );
-  const authConfig = readAuthConfig();
+  if (conversationConfig && !authConfig)
+    throw new Error('CONVERSATION_CONFIG: authentication required');
   const backend = readAuthRateLimitBackend();
   if (backend === 'redis' && !authConfig)
     throw new Error('AUTH_CONFIG: authentication is required for Redis rate limiting');
@@ -65,6 +73,38 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         handler: authHandler,
       }),
     );
+    if (conversationConfig) {
+      if (!ctx.get('mioKernel')) throw new Error('CONVERSATION_CONFIG: DSH kernel required');
+      await ctx.plugin({
+        name: 'mio-conversations',
+        inject: ['mioKernel', 'llm', 'webServer'],
+        async apply(conversationCtx: Context) {
+          const store = await createConversationStore(conversationConfig.databaseURL);
+          const conversations = createConversationService(
+            store,
+            createDshConversationEngine(conversationCtx, conversationConfig),
+          );
+          const http = createConversationHandler(conversations, auth.identity, authConfig.origins);
+          try {
+            conversationCtx.effect(() => async () => {
+              http.close();
+              await conversations.close();
+            });
+            conversationCtx.effect(() =>
+              conversationCtx.webServer.register({
+                kind: 'prefix',
+                path: '/api/v1/conversations',
+                handler: http.handler,
+              }),
+            );
+          } catch (error) {
+            http.close();
+            await conversations.close();
+            throw error;
+          }
+        },
+      });
+    }
     ctx.effect(() =>
       ctx.webServer.register({
         kind: 'exact',

@@ -7,6 +7,7 @@ export interface HttpOptions {
   token: string;
   allowedOrigins: readonly string[];
   instanceId: string;
+  sessions?: boolean;
 }
 
 /** Validate deployment configuration before claiming routes or reporting readiness. */
@@ -88,7 +89,7 @@ export function createHandler(options: HttpOptions) {
       apiVersion: 'v1',
       stage: 'foundation',
       tools: [],
-      sessions: false,
+      sessions: options.sessions ?? false,
     };
     send(200, capabilities);
   };

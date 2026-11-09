@@ -109,11 +109,162 @@ function invoke(root: string, args: string[], input?: unknown) {
 const statePath = (root: string, id = 'probe') => join(root, `.work/tasks/${id}/state.json`);
 const state = async (root: string, id = 'probe'): Promise<Task> =>
   JSON.parse(await readFile(statePath(root, id), 'utf8'));
+
+it.each(['checks', 'verification'])(
+  'keeps the full %s failure after a successful partial probe',
+  async (criterion) => {
+    const root = await fixture();
+    await ready(root);
+    const command = [process.execPath, '-e', 'process.exit(1)'];
+    const revision = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output).revision;
+    expect(
+      invoke(root, ['update', 'probe', '--stdin'], {
+        revision,
+        reason: 'Declare the complete check, independent of its criterion name.',
+        plan: {
+          acceptance: [
+            {
+              id: criterion,
+              method: 'automated',
+              criterion: 'The complete check must pass.',
+              command,
+            },
+          ],
+        },
+      }).status,
+    ).toBe(0);
+    expect(invoke(root, ['sync', 'probe', 'Inspected the complete check contract.']).status).toBe(
+      0,
+    );
+    verifying(root);
+    expect(invoke(root, ['run', 'probe', criterion, '--', ...command]).status).toBe(1);
+    expect(invoke(root, ['run', 'probe', criterion, '--', process.execPath, '-e', '']).status).toBe(
+      0,
+    );
+    const result = JSON.parse(invoke(root, ['check', 'probe']).output);
+    expect(
+      result.evidence.find((entry: { criterion: string }) => entry.criterion === criterion).result,
+    ).toBe('fail');
+    expect((await state(root)).evidence.map((entry) => entry.result)).toEqual(['fail', 'pass']);
+  },
+);
+
 async function edit(root: string, change: (task: Task) => void, id = 'probe') {
   const task = await state(root, id);
   change(task);
   await writeFile(statePath(root, id), JSON.stringify(task));
 }
+
+it('requires a complete check and retains a failed supplement until a new complete check', async () => {
+  const root = await fixture();
+  await ready(root);
+  expect(run(root, '').status).toBe(0);
+  const result = () => JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result;
+  expect(result()).toBe('pending');
+  expect(invoke(root, ['run', 'probe', 'checks']).status).toBe(0);
+  expect(result()).toBe('pass');
+  expect(run(root, 'process.exit(3)').status).toBe(1);
+  expect(run(root, '').status).toBe(0);
+  expect(result()).toBe('fail');
+  const originals = (await state(root)).evidence;
+  expect(invoke(root, ['run', 'probe', 'checks']).status).toBe(0);
+  expect(result()).toBe('pass');
+  expect((await state(root)).evidence.slice(0, originals.length)).toEqual(originals);
+});
+
+it.each(['missing', 'corrupt'])(
+  'does not conceal a %s complete original with a passing supplement',
+  async (damage) => {
+    const root = await fixture();
+    await ready(root);
+    expect(run(root).status).toBe(0);
+    expect(run(root).status).toBe(0);
+    expect(run(root, '').status).toBe(0);
+    const path = join(root, (await state(root)).evidence[1]!.artifact);
+    if (damage === 'missing') await rm(path);
+    else await writeFile(path, 'damaged complete original');
+    expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe(damage);
+    expect(invoke(root, ['run', 'probe', 'checks']).status).toBe(0);
+    expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe('pass');
+  },
+);
+
+it('requires explicit result and check declarations before implementation or evidence commands', async () => {
+  const root = await fixture();
+  await ready(root);
+  // Model a readable legacy record, not a new classification inferred by the tool.
+  await edit(root, (task) => {
+    delete task.plan.result;
+    delete task.plan.acceptance[0]!.command;
+  });
+  const before = await readFile(statePath(root), 'utf8');
+  const context = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  expect(context.assessment.errors.join('\n')).toContain('WORK_RESULT_REQUIRED');
+  expect(context.assessment.errors.join('\n')).toContain('WORK_CHECK_COMMAND');
+  expect(await readFile(statePath(root), 'utf8')).toBe(before);
+  const blocked = invoke(root, ['update', 'probe', '--stdin'], {
+    revision: context.revision,
+    reason: 'Attempt implementation without resolving the missing contract.',
+    stage: 'C1_IMPLEMENTATION',
+    plan: { nextAction: 'Implement the probe.' },
+  });
+  expect(blocked.status).toBe(1);
+  expect(run(root, 'require("node:fs").writeFileSync(".work/forbidden","bad")').status).toBe(1);
+  await expect(readFile(join(root, '.work/forbidden'))).rejects.toThrow();
+  expect((await state(root)).evidence).toHaveLength(0);
+  const revision = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output).revision;
+  expect(
+    invoke(root, ['update', 'probe', '--stdin'], {
+      revision,
+      reason: 'The fixture user requested maintenance; declare its actual complete command.',
+      plan: {
+        result: null,
+        acceptance: [
+          {
+            id: 'checks',
+            method: 'automated',
+            criterion: 'The probe check passes.',
+            command: [process.execPath, '-e', 'console.log("observed probe")'],
+          },
+        ],
+      },
+    }).status,
+  ).toBe(0);
+  expect(
+    invoke(root, ['sync', 'probe', 'Inspected explicit maintenance and check contract.']).status,
+  ).toBe(0);
+  await implementing(root);
+  verifying(root);
+  expect(invoke(root, ['run', 'probe', 'checks']).status).toBe(0);
+});
+
+it('preserves evidence across phase updates but invalidates it when the declared check changes', async () => {
+  const root = await fixture();
+  await ready(root);
+  expect(run(root).status).toBe(0);
+  const before = await state(root);
+  await implementing(root);
+  verifying(root);
+  expect((await state(root)).checkpoint!.candidate).toBe(before.checkpoint!.candidate);
+  expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe('pass');
+  const revision = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output).revision;
+  expect(
+    invoke(root, ['update', 'probe', '--stdin'], {
+      revision,
+      reason: 'The user changed the actual acceptance contract, not just the next action.',
+      plan: {
+        acceptance: before.plan.acceptance.map((entry) =>
+          entry.id === 'checks'
+            ? { ...entry, command: [process.execPath, '-e', 'console.log("changed requirement")'] }
+            : entry,
+        ),
+      },
+    }).status,
+  ).toBe(0);
+  expect(invoke(root, ['sync', 'probe', 'Read the changed acceptance command.']).status).toBe(0);
+  expect(JSON.parse(invoke(root, ['check', 'probe']).output).evidence[0].result).toBe('pending');
+  expect((await state(root)).evidence).toEqual(before.evidence);
+});
 
 async function ready(root: string, id = 'probe') {
   expect(invoke(root, ['start', id, 'Verify the probe', 'docs/api.md']).status).toBe(0);
@@ -122,9 +273,17 @@ async function ready(root: string, id = 'probe') {
     revision,
     reason: 'Derived the probe contract from the fixture user request.',
     plan: {
+      result: null,
       scope: ['src'],
       authorization: 'Fixture user requests local probe implementation and checks.',
-      acceptance: [{ id: 'checks', criterion: 'The probe check passes.', method: 'automated' }],
+      acceptance: [
+        {
+          id: 'checks',
+          criterion: 'The probe check passes.',
+          method: 'automated',
+          command: [process.execPath, '-e', 'console.log("observed probe")'],
+        },
+      ],
       nextAction: 'Implement and check the probe.',
       stopCondition: 'Return verified results for review.',
     },
@@ -531,9 +690,17 @@ function proposal() {
     requirement,
     plan: {
       goal: 'Implement the PRD value subtask.',
+      result: null,
       scope: ['src'],
       authorization: 'Fixture user requests this PRD subtask and local validation.',
-      acceptance: [{ id: 'checks', criterion: 'The value is 2.', method: 'automated' }],
+      acceptance: [
+        {
+          id: 'checks',
+          criterion: 'The value is 2.',
+          method: 'automated',
+          command: [process.execPath, '-e', 'console.log("observed probe")'],
+        },
+      ],
       nonGoals: ['No remote operations.'],
       nextAction: 'Implement the value subtask.',
       stopCondition: 'Return results for human review.',
@@ -928,7 +1095,14 @@ it('invalidates release on structured contract changes while preserving old evid
     revision: progress.revision,
     reason: 'User changed the required criterion.',
     plan: {
-      acceptance: [{ id: 'checks', criterion: 'A new required result.', method: 'automated' }],
+      acceptance: [
+        {
+          id: 'checks',
+          criterion: 'A new required result.',
+          method: 'automated',
+          command: [process.execPath, '-e', 'console.log("observed probe")'],
+        },
+      ],
     },
   });
   expect(changed.status, changed.output).toBe(0);

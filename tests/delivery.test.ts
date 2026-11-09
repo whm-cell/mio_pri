@@ -86,13 +86,24 @@ async function setup(
 ) {
   const task = draft(root, 'alice', id, 'Implement a capability');
   Object.assign(task.plan, {
+    result: null,
     scope: ['src', 'docs'],
     sources: ['docs/api.md'],
     authorization: 'Fixture user authorized implementation.',
     acceptance: [
-      { id: 'checks', criterion: 'Capability returns 1.', method: 'automated' },
+      {
+        id: 'checks',
+        criterion: 'Capability returns 1.',
+        method: 'automated',
+        command: ['node', 'fixture-check.js'],
+      },
       { id: 'quality-review', criterion: 'Review source.', method: 'review' },
-      ...extras.map((id) => ({ id, criterion: 'Fixture extra check.', method: 'automated' })),
+      ...extras.map((id) => ({
+        id,
+        criterion: 'Fixture extra check.',
+        method: 'automated',
+        command: ['node', `${id}.js`],
+      })),
     ],
     nextAction: 'Verify',
     stopCondition: 'Return for acceptance',
@@ -113,21 +124,26 @@ async function passing(root: string, id = 'probe') {
   task.checkpoint = await capture(root, task);
   const artifact = `.work/tasks/${id}/evidence/checks-${task.evidence.length}.log`;
   await mkdir(dirname(join(root, artifact)), { recursive: true });
-  await writeFile(join(root, artifact), 'Observed fixture capability\n');
+  const output =
+    json({ argv: task.plan.acceptance[0]!.command, candidate: task.checkpoint.candidate }) +
+    'Observed fixture capability\n';
+  await writeFile(join(root, artifact), output);
   task.evidence.push({
     criterion: 'checks',
     method: 'automated',
     result: 'pass',
     candidate: task.checkpoint.candidate,
     artifact,
-    sha256: digest('Observed fixture capability\n'),
+    sha256: digest(output),
     summary: 'Fixture observation',
     environment: 'isolated fixture',
   });
   for (const criterion of task.plan.acceptance.filter(
     (entry) => entry.method === 'automated' && entry.id !== 'checks',
   )) {
-    const content = `Observed independent fixture criterion ${criterion.id}.\n`;
+    const content =
+      json({ argv: criterion.command, candidate: task.checkpoint.candidate }) +
+      `Observed independent fixture criterion ${criterion.id}.\n`;
     const extraArtifact = `.work/tasks/${id}/evidence/${criterion.id}-${task.evidence.length}.log`;
     await writeFile(join(root, extraArtifact), content);
     task.evidence.push({
@@ -475,6 +491,104 @@ it('keeps maintenance local and archives without creating public results', async
   expect(archived.status, archived.stderr).toBe(0);
   expect((await loadTask(root, 'maintain')).task.archived).toBe(true);
   expect(await publicFiles(root)).toEqual(before);
+});
+
+it('binds the complete check and later supplements in the acceptance draft', async () => {
+  const root = await fixture();
+  await setup(root);
+  const complete = (await loadTask(root, 'probe')).task.evidence[0]!;
+  const supplement = invoke(root, [
+    'run',
+    'probe',
+    'checks',
+    '--',
+    process.execPath,
+    '-e',
+    'console.log("partial probe")',
+  ]);
+  expect(supplement.status, supplement.stderr).toBe(0);
+  const partial = (await loadTask(root, 'probe')).task.evidence.at(-1)!;
+  await prepare(root);
+  const prepared = (await loadTask(root, 'probe')).task;
+  const draft = parseDraft(await readFile(join(root, prepared.delivery!.draft!.path), 'utf8'));
+  expect(draft.evidence.filter((entry) => entry.criterion === 'checks')).toEqual([
+    complete,
+    partial,
+  ]);
+  await writeFile(join(root, complete.artifact), 'damaged complete check');
+  await expect(deliver(root, 'probe', json(await completeRequest(root)))).rejects.toThrow(
+    'WORK_DELIVERY_EVIDENCE',
+  );
+  await passing(root);
+  await prepare(root);
+  const refreshed = (await loadTask(root, 'probe')).task;
+  const next = parseDraft(await readFile(join(root, refreshed.delivery!.draft!.path), 'utf8'));
+  expect(next.evidence.filter((entry) => entry.criterion === 'checks')).toHaveLength(1);
+  expect(
+    next.evidence.some(
+      (entry) => entry.artifact === complete.artifact || entry.artifact === partial.artifact,
+    ),
+  ).toBe(false);
+  expect(refreshed.evidence.some((entry) => entry.artifact === complete.artifact)).toBe(true);
+});
+
+it.each([false, true])(
+  'corrects a mistaken result declaration without discarding originals (draft=%s)',
+  async (prepared) => {
+    const root = await fixture();
+    await setup(root);
+    if (prepared) await prepare(root);
+    const before = await loadTask(root, 'probe');
+    const files = await publicFiles(root);
+    const draft = before.task.delivery?.draft;
+    const draftBytes = draft ? await readFile(join(root, draft.path), 'utf8') : null;
+    const corrected = invoke(root, ['update', 'probe', '--stdin'], {
+      revision: digest(before.raw),
+      reason:
+        'This is maintenance; correct the accidental capability declaration before acceptance.',
+      plan: { result: null, nextAction: 'Verify the maintenance contract.' },
+    });
+    expect(corrected.status, corrected.stderr).toBe(0);
+    const after = (await loadTask(root, 'probe')).task;
+    expect(after.plan.result).toBeNull();
+    expect(after.delivery).toBeUndefined();
+    expect(after.evidence).toEqual(before.task.evidence);
+    if (draft) {
+      expect(await readFile(join(root, draft.path), 'utf8')).toBe(draftBytes);
+      expect(after.notes.join('\n')).toContain(draft.path);
+    }
+    expect(
+      invoke(root, ['sync', 'probe', 'Inspected the corrected maintenance scope.']).status,
+    ).toBe(0);
+    const revision = digest((await loadTask(root, 'probe')).raw);
+    expect(
+      invoke(root, ['update', 'probe', '--stdin'], {
+        revision,
+        reason: 'Continue the authorized maintenance.',
+        stage: 'C1_IMPLEMENTATION',
+        plan: { nextAction: 'Implement maintenance.' },
+      }).status,
+    ).toBe(0);
+    await expect(prepare(root)).rejects.toThrow('WORK_DELIVERY_RESULT');
+    expect(await publicFiles(root)).toEqual(files);
+  },
+);
+
+it('does not erase an accepted result by reclassifying it as maintenance', async () => {
+  const root = await fixture();
+  await setup(root);
+  await finish(root);
+  const before = await loadTask(root, 'probe');
+  const files = await publicFiles(root);
+  const result = invoke(root, ['update', 'probe', '--stdin'], {
+    revision: digest(before.raw),
+    reason: 'Try to remove an already accepted binding.',
+    plan: { result: null },
+  });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain('WORK_DELIVERY_RESULT');
+  expect((await loadTask(root, 'probe')).raw).toBe(before.raw);
+  expect(await publicFiles(root)).toEqual(files);
 });
 
 it.each(['code', 'original', 'draft', 'evidence-binding', 'acceptance'])(

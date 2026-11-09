@@ -12,7 +12,7 @@ export interface Requirement {
 export interface TaskPlan {
   id: string;
   requirement?: Requirement;
-  result?: { prd: string; key: string };
+  result?: { prd: string; key: string } | null;
   norms?: { version?: 2; paths: string[]; reason: string };
   goal: string;
   scope: string[];
@@ -20,7 +20,7 @@ export interface TaskPlan {
   sources: string[];
   authorization: string;
   nonGoals: string[];
-  acceptance: { id: string; criterion: string; method: string }[];
+  acceptance: { id: string; criterion: string; method: string; command?: string[] }[];
   decisions: { status: string; text: string; source: string }[];
   dependencies: { task: string; ref: string; ready: boolean }[];
   blockers: string[];
@@ -122,7 +122,7 @@ export function parseTask(raw: string): Task {
     }
     identifier(requirement.key as string);
   }
-  if (plan.result !== undefined) {
+  if (plan.result !== undefined && plan.result !== null) {
     const result = object(plan.result);
     if (
       typeof result.prd !== 'string' ||
@@ -167,6 +167,15 @@ export function parseTask(raw: string): Task {
         (!methods.includes(entry.method as string) || !entry.id || !entry.criterion)
       )
         throw new Error('WORK_SCHEMA: acceptance method/id/criterion');
+      if (
+        key === 'acceptance' &&
+        entry.command !== undefined &&
+        (entry.method !== 'automated' ||
+          !strings(entry.command) ||
+          !entry.command.length ||
+          !entry.command[0]!.trim())
+      )
+        throw new Error('WORK_SCHEMA: automated command must be a nonempty argv array');
       if (
         key === 'decisions' &&
         !['CONFIRMED', 'AI_PROPOSED', 'OPEN', 'REJECTED'].includes(entry.status as string)
@@ -220,7 +229,7 @@ export function parseTask(raw: string): Task {
       Object.keys(delivery).some((key) => !['version', 'draft', 'accepted'].includes(key))
     )
       throw new Error('WORK_SCHEMA: delivery');
-    if (delivery.version === 2 && plan.result === undefined)
+    if (delivery.version === 2 && !plan.result)
       throw new Error('WORK_SCHEMA: delivery result binding');
     for (const kind of ['draft', 'accepted']) {
       if (delivery[kind] === undefined) continue;
@@ -242,8 +251,8 @@ export function parseTask(raw: string): Task {
         throw new Error('WORK_SCHEMA: delivery path');
       if (
         delivery.version === 2 &&
-        (plan.result === undefined ||
-          (kind === 'accepted' && ref.key !== (plan.result as TaskPlan['result'])!.key))
+        (!plan.result ||
+          (kind === 'accepted' && ref.key !== (plan.result as NonNullable<TaskPlan['result']>).key))
       )
         throw new Error('WORK_SCHEMA: delivery result binding');
     }

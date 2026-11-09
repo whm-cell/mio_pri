@@ -17,6 +17,7 @@ import {
   resultSelector,
 } from './compact-store.ts';
 import type { ResultBook, ResultDetails } from './compact-store.ts';
+import { automatedEvidence } from './evidence.ts';
 
 export { hashField, metadata, optionalText, record, textField } from './report-format.ts';
 export type { PublicResult, ResultBook } from './compact-store.ts';
@@ -178,20 +179,27 @@ export async function compactInputs(root: string, path: string, task: Task) {
   );
 }
 
-export function matchingEvidence(task: Task, candidate: string) {
-  return task.plan.acceptance.map((criterion) => {
-    const entry = task.evidence
-      .filter(
-        (item) =>
-          item.criterion === criterion.id &&
-          item.method === criterion.method &&
-          item.candidate === candidate,
-      )
-      .at(-1);
+export async function matchingEvidence(root: string, task: Task, candidate: string) {
+  const selected: Evidence[] = [];
+  for (const criterion of task.plan.acceptance) {
+    const entries = task.evidence.filter(
+      (item) =>
+        item.criterion === criterion.id &&
+        item.method === criterion.method &&
+        item.candidate === candidate,
+    );
+    if (criterion.method === 'automated') {
+      const observation = await automatedEvidence(root, task.plan.id, entries, criterion.command);
+      if (observation.result !== 'pass') throw new Error(`WORK_DELIVERY_EVIDENCE: ${criterion.id}`);
+      selected.push(...observation.evidence);
+      continue;
+    }
+    const entry = entries.at(-1);
     if (!entry || entry.result !== 'pass')
       throw new Error(`WORK_DELIVERY_EVIDENCE: ${criterion.id}`);
-    return entry;
-  });
+    selected.push(entry);
+  }
+  return selected;
 }
 
 export function parseDraft(source: string): ResultDraft {
@@ -220,7 +228,7 @@ export async function readDraft(root: string, task: Task, candidate: string) {
     draft.prd !== task.plan.result?.prd ||
     draft.result.key !== task.plan.result.key ||
     draft.candidate !== candidate ||
-    json(draft.evidence) !== json(matchingEvidence(task, candidate)) ||
+    json(draft.evidence) !== json(await matchingEvidence(root, task, candidate)) ||
     !(await sameMarkdown(source, renderDraft(draft)))
   )
     throw new Error('WORK_DELIVERY_STALE: draft result/candidate/evidence mismatch');

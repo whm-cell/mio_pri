@@ -177,6 +177,15 @@ export async function updateTask(root: string, id: string, raw: string) {
     task.archived = false;
   }
   Object.assign(task.plan, patch);
+  if (patch.result === null && task.delivery) {
+    if (task.delivery.accepted)
+      throw new Error('WORK_DELIVERY_RESULT: cannot remove an accepted result binding');
+    if (task.delivery.draft)
+      task.notes.push(
+        `Previous unaccepted draft remains historical: ${task.delivery.draft.path}. The corrected maintenance declaration cannot publish it.`,
+      );
+    delete task.delivery;
+  }
   if (task.plan.result && task.delivery?.version !== 2) {
     if (task.delivery?.accepted)
       task.notes.push(

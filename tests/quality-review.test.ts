@@ -60,12 +60,19 @@ async function fixture(scope = ['src'], development = true) {
       goal: 'Change a fixture capability.',
       ...(development
         ? { result: { prd: 'docs/tasks/quality/prd.md', key: 'fixture-capability' } }
-        : {}),
+        : { result: null }),
       norms: { paths: [], reason: 'Fixture constant changes no public normative behavior.' },
       scope,
       inputs: ['src'],
       authorization: 'Fixture user authorizes local changes and checks.',
-      acceptance: [{ id: 'checks', method: 'automated', criterion: 'Fixture check succeeds.' }],
+      acceptance: [
+        {
+          id: 'checks',
+          method: 'automated',
+          criterion: 'Fixture check succeeds.',
+          command: [process.execPath, '-e', 'console.log(1)'],
+        },
+      ],
       nextAction: 'Collect fixture checks and reviews.',
       stopCondition: 'Return for human acceptance.',
     },
@@ -435,7 +442,7 @@ it('allows only current normative pages and an explicitly justified empty set', 
 it('enables reconciliation for maintenance without inventing a development result or blocking cancellation', async () => {
   const f = await fixture(['docs/api.md'], false);
   const task = await f.state();
-  expect(task.plan.result).toBeUndefined();
+  expect(task.plan.result).toBeNull();
   expect(task.delivery).toBeUndefined();
   expect(task.plan.norms?.version).toBe(2);
   expect(f.context().assessment.normsReview).toMatchObject({ required: true, result: 'pending' });

@@ -35,7 +35,7 @@ export async function handoff(root: string, task: Task) {
     plan: {
       id: plan.id,
       ...(plan.requirement ? { requirement: plan.requirement } : {}),
-      ...(plan.result ? { result: plan.result } : {}),
+      ...(plan.result !== undefined ? { result: plan.result } : {}),
       ...(plan.norms ? { norms: plan.norms } : {}),
       goal: plan.goal,
       scope: plan.scope,

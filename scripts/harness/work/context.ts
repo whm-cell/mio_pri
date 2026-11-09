@@ -12,6 +12,9 @@ import { normsCriterion, normsIssues } from './norms-review.ts';
 import { requirementIssues } from './requirements.ts';
 import { readConflict } from './reconciliation.ts';
 import { manualEvidenceResult } from './manual-evidence.ts';
+import { artifact, automatedEvidence } from './evidence.ts';
+
+export { artifact } from './evidence.ts';
 
 export const requiredSources = ['AGENTS.md', 'docs/coordination.md', 'docs/work-records.md'];
 
@@ -93,7 +96,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
     dependencies: plan.dependencies,
     stopCondition: plan.stopCondition,
     ...(plan.requirement ? { requirement: plan.requirement } : {}),
-    ...(plan.result ? { result: plan.result } : {}),
+    ...(plan.result !== undefined ? { result: plan.result } : {}),
     ...(plan.norms ? { norms: plan.norms } : {}),
     ...(task.delivery ? { deliveryVersion: task.delivery.version } : {}),
   };
@@ -131,6 +134,16 @@ export async function inputStamp(root: string, checkpoint: Checkpoint): Promise<
 
 export function contractIssues(task: Task): string[] {
   const errors: string[] = [];
+  if (task.plan.result === undefined)
+    errors.push(
+      'WORK_RESULT_REQUIRED: declare plan.result for development, or explicit null for work with no development result; inspect the actual goal before implementation',
+    );
+  for (const criterion of task.plan.acceptance) {
+    if (criterion.method === 'automated' && !criterion.command)
+      errors.push(
+        `WORK_CHECK_COMMAND: declare acceptance ${criterion.id}.command as the complete check argv before implementation or verification`,
+      );
+  }
   for (const key of ['goal', 'authorization', 'nextAction', 'stopCondition'] as const) {
     if (!task.plan[key].trim()) errors.push(`WORK_CONTRACT: plan.${key} is required`);
   }
@@ -146,21 +159,6 @@ export function contractIssues(task: Task): string[] {
   if (task.reviewDecision === 'REQUEST_CHANGES' && task.stage === 'C1_RELEASED')
     errors.push('WORK_REVIEW: requested changes are unresolved');
   return errors;
-}
-
-export async function artifact(root: string, id: string, path: string): Promise<Buffer> {
-  // Raw evidence is isolated by task. Shared Markdown can be used after the operator retrieves it.
-  if (
-    !beneath(path, `.work/tasks/${id}/evidence`) &&
-    !(path.startsWith('docs/') && path.endsWith('.md'))
-  )
-    throw new Error("WORK_ARTIFACT: use this task's evidence directory or a shared document");
-  if (path.startsWith('docs/tasks/')) resolveDocument(path, await documentCatalog(root));
-  const absolute = await checkedPath(root, path);
-  const stat = await lstat(absolute);
-  if (!stat.isFile() || stat.nlink !== 1)
-    throw new Error('WORK_ARTIFACT: original must be a regular file with no hard-link aliases');
-  return readFile(absolute);
 }
 
 export async function assess(
@@ -203,14 +201,21 @@ export async function assess(
   }
   const evidence = [];
   for (const criterion of task.plan.acceptance) {
-    const entry = task.evidence
-      .filter(
-        (item) =>
-          item.criterion === criterion.id &&
-          item.method === criterion.method &&
-          item.candidate === current.candidate,
-      )
-      .at(-1);
+    const entries = task.evidence.filter(
+      (item) =>
+        item.criterion === criterion.id &&
+        item.method === criterion.method &&
+        item.candidate === current.candidate,
+    );
+    if (criterion.method === 'automated') {
+      evidence.push({
+        criterion: criterion.id,
+        method: criterion.method,
+        result: (await automatedEvidence(root, task.plan.id, entries, criterion.command)).result,
+      });
+      continue;
+    }
+    const entry = entries.at(-1);
     let result = entry?.result ?? 'pending';
     if (entry) {
       try {
@@ -315,5 +320,5 @@ export function addEvidence(task: Task, entry: Evidence) {
     `Review ${entry.criterion} (${entry.result}), current originals and remaining gaps; ` +
     (task.plan.result
       ? 'when sufficient, prepare the candidate for actual acceptance.'
-      : 'No development result is declared; check the task intent. Development delivery needs plan.result; maintenance may be returned and archived when sufficient.');
+      : 'The task declares no development result; return verified maintenance and archive when appropriate.');
 }

@@ -45,7 +45,7 @@ export async function deliver(root: string, id: string, rawRequest: string) {
   const { task, raw } = await loadTask(root, id);
   if (!task.plan.result)
     throw new Error(
-      'WORK_DELIVERY_RESULT: maintenance stays local; public complete requires a PRD result',
+      'WORK_DELIVERY_RESULT: no development result is declared; public complete requires a PRD result',
     );
   if (task.delivery?.version !== 2)
     throw new Error('WORK_DELIVERY_OBSOLETE: reconcile plan.result using update before preparing');
@@ -121,7 +121,7 @@ async function prepare(
     prd: task.plan.result!.prd,
     candidate,
     result,
-    evidence: matchingEvidence(task, candidate),
+    evidence: await matchingEvidence(root, task, candidate),
   };
   const source = await markdown(renderDraft(draft));
   const path = `.work/tasks/${task.plan.id}/delivery/draft.md`;

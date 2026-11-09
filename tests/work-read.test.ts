@@ -63,10 +63,18 @@ async function ready(root: string, authorization = 'Fixture user authorizes this
     requirement: { source: 'docs/api.md', section: 'API', key: 'probe' },
     plan: {
       goal: 'Verify progressive reads.',
+      result: null,
       scope: ['src'],
       sources: ['docs/api.md'],
       authorization,
-      acceptance: [{ id: 'checks', criterion: 'The real CLI probe passes.', method: 'automated' }],
+      acceptance: [
+        {
+          id: 'checks',
+          criterion: 'The real CLI probe passes.',
+          method: 'automated',
+          command: [process.execPath, '-e', 'process.exit(0)'],
+        },
+      ],
       nextAction: 'Implement and check the authorized probe.',
       stopCondition: 'Return actual results and limits.',
     },
@@ -283,7 +291,7 @@ it('keeps readiness stable across scope pagination without recording reading sta
   expect(await readFile(path(root, id), 'utf8')).toBe(beforeReading);
 });
 
-it('shows an undeclared development result without classifying or blocking maintenance', async () => {
+it('shows explicit maintenance without inventing a development result', async () => {
   const root = await fixture();
   const { id, result } = await ready(root);
   expect(result.task.result).toBeNull();
@@ -304,11 +312,10 @@ it('shows an undeclared development result without classifying or blocking maint
   ).toBe(0);
   const current = invoke(root, ['context', id, 'verify']).value();
   expect(current.task.result).toBeNull();
-  expect(current.task.nextAction).toContain('No development result is declared');
-  expect(current.task.nextAction).toContain('Development delivery needs plan.result');
-  expect(current.task.nextAction).toContain('maintenance may be returned');
+  expect(current.task.nextAction).toContain('declares no development result');
+  expect(current.task.nextAction).toContain('return verified maintenance');
   const saved = JSON.parse(await readFile(path(root, id), 'utf8')) as Task;
-  expect(saved.plan).not.toHaveProperty('result');
+  expect(saved.plan.result).toBeNull();
 });
 
 it('keeps the result declaration visible when the whole task view exceeds its budget', async () => {
@@ -368,7 +375,13 @@ it.each([0, 7])(
     }
     const task = JSON.parse(await readFile(path(root, id), 'utf8')) as Task;
     expect(task.evidence).toHaveLength(2);
-    expect(task.evidence[1]!.summary).toBe(task.evidence[0]!.summary);
+    expect(task.evidence[1]!.summary.split('; coverage=')[0]).toBe(
+      task.evidence[0]!.summary.split('; coverage=')[0],
+    );
+    expect(task.evidence[0]!.summary).toContain(
+      `coverage=${exit === 0 ? 'complete' : 'supplement'}`,
+    );
+    expect(task.evidence[1]!.summary).toContain('coverage=supplement');
     expect(task.evidence[1]!.summary).toContain(`exit ${exit}`);
     expect(task.evidence[1]!.summary.length).toBeLessThan(160);
     const entry = task.evidence[1]!;

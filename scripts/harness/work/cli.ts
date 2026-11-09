@@ -56,7 +56,7 @@ Agent operates this CLI; the user supplies goals and decisions.
   read-result <prd> [key] [read options] page a public result without personal records
   check <task>                          read-only context/evidence assessment
   sync <task> <reason>                  acknowledge inspected changes; retain evidence
-  run <task> <criterion> -- <argv ...>  capture an automated check without a shell
+  run <task> <criterion> [-- <argv ...>] capture the declared check or a supplemental probe
   exec <task> -- <argv ...>             check C1 before launching an implementation command
   evidence <task> <criterion> <pass|fail|pending> <artifact> <summary>
   handoff <task>                        prepare a local portable Markdown handoff
@@ -301,9 +301,13 @@ async function main(activity?: CommandActivity) {
     await saveTask(root, task, raw);
     return console.log('Evidence recorded; human acceptance remains pending.');
   }
-  if (criterion.method !== 'automated' || args[2] !== '--' || args.length < 4)
+  if (
+    criterion.method !== 'automated' ||
+    (args.length !== 2 && (args[2] !== '--' || args.length < 4))
+  )
     throw new Error(help);
-  const argv = args.slice(3);
+  const argv = args.length === 2 ? criterion.command! : args.slice(3);
+  const completeCheck = json(argv) === json(criterion.command);
   const beforeStamp = await inputStamp(root, task.checkpoint!);
   const relative = `.work/tasks/${task.plan.id}/evidence/${randomUUID()}.log`;
   const path = await checkedPath(root, relative);
@@ -361,7 +365,7 @@ async function main(activity?: CommandActivity) {
     artifact: evidencePath,
     sha256: digest(await readFile(await checkedPath(root, evidencePath))),
     candidate: state.candidate,
-    summary: `exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}${contextError ? `; ${contextError}` : ''}`,
+    summary: `exit ${outcome.status}; cancelled=${outcome.cancelled}; unsettled=${outcome.unsettled}; contextChanged=${changed}; coverage=${completeCheck ? 'complete' : 'supplement'}${contextError ? `; ${contextError}` : ''}`,
     environment: environment(),
   });
   if (outcome.unsettled)
@@ -370,9 +374,12 @@ async function main(activity?: CommandActivity) {
   else if (changed)
     task.plan.nextAction =
       'Inspect the observed input changes and current authorization before sync and verification of the resulting candidate.';
+  else if (!completeCheck)
+    task.plan.nextAction =
+      'Review the supplemental observation and the declared complete check; a passing probe cannot replace complete verification or clear failures.';
   await saveTask(root, task, raw);
   console.log(
-    `${passed ? 'PASS' : 'NOT PASSED'}: ${evidencePath}${changed ? '; WORK_CONTEXT_CHANGED during command' : ''}`,
+    `${completeCheck ? '' : 'SUPPLEMENTAL '}${passed ? 'PASS' : 'NOT PASSED'}: ${evidencePath}${changed ? '; WORK_CONTEXT_CHANGED during command' : ''}`,
   );
   if (!passed) process.exitCode = 1;
 }

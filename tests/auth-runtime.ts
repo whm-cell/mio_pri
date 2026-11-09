@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,7 +15,13 @@ export async function packedAuthRuntime(
   databaseURL: string,
   redisURL: string,
   namespace: string,
-  options: { conversations?: boolean; modelFixture?: boolean } = {},
+  options: {
+    conversations?: boolean;
+    modelFixture?: boolean;
+    onelinkFixture?: boolean;
+    providerMasterKey?: string;
+    providerKeyId?: string;
+  } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'mio-redis-profile-'));
   const command = (bin: string, args: string[]) => {
@@ -42,10 +48,20 @@ export async function packedAuthRuntime(
   await symlink(resolve('node_modules'), join(packed, 'node_modules'), 'dir');
   const home = join(directory, 'home');
   await prepareProfile(home, packed);
-  if (options.modelFixture) {
+  const observationsPath = join(directory, 'model-fixture/requests.jsonl');
+  if (options.modelFixture || options.onelinkFixture) {
     const fixture = join(directory, 'model-fixture');
     await mkdir(fixture);
-    await cp(resolve('tests/conversations-model-plugin.ts'), join(fixture, 'index.ts'));
+    await cp(
+      resolve(
+        options.onelinkFixture
+          ? 'tests/onelink/profile-plugin.ts'
+          : 'tests/conversations-model-plugin.ts',
+      ),
+      join(fixture, 'index.ts'),
+    );
+    if (options.onelinkFixture)
+      await cp(resolve('tests/onelink/fixture.ts'), join(fixture, 'fixture.ts'));
     await writeFile(
       join(fixture, 'package.json'),
       JSON.stringify({ name: '@mio/test-provider', type: 'module', exports: './index.ts' }),
@@ -85,6 +101,33 @@ export async function packedAuthRuntime(
   };
   return {
     origin,
+    nativeLogRoot: join(home, 'sessions'),
+    async onelinkPaused() {
+      return readFile(join(directory, 'model-fixture/paused'), 'utf8').then(
+        () => true,
+        () => false,
+      );
+    },
+    async releaseOnelink() {
+      await writeFile(join(directory, 'model-fixture/release'), 'release');
+    },
+    async setOnelinkCatalog(ids: string[]) {
+      await writeFile(join(directory, 'model-fixture/catalog.json'), JSON.stringify(ids));
+    },
+    async onelinkRequests(): Promise<
+      { authorization: string | null; body: Record<string, unknown> }[]
+    > {
+      const data = await readFile(observationsPath, 'utf8').catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return '';
+          throw error;
+        },
+      );
+      return data
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    },
     async start(backend: 'database' | 'redis') {
       assert(
         !child || child.exitCode !== null || child.signalCode !== null,
@@ -109,6 +152,13 @@ export async function packedAuthRuntime(
           MIO_REDIS_URL: redisURL,
           MIO_REDIS_NAMESPACE: namespace,
           ...(options.conversations ? { MIO_CONVERSATIONS_DATABASE_URL: databaseURL } : {}),
+          ...(options.providerMasterKey
+            ? {
+                MIO_PROVIDERS_DATABASE_URL: databaseURL,
+                MIO_PROVIDERS_MASTER_KEY: options.providerMasterKey,
+                MIO_PROVIDERS_MASTER_KEY_ID: options.providerKeyId ?? 'profile-test-key',
+              }
+            : {}),
           ...(options.modelFixture
             ? { MIO_MODEL_PROVIDER: 'mio-test-only', MIO_MODEL: 'scripted' }
             : {}),

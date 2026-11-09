@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Context } from '@deepseek-ai/cordis';
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -267,7 +268,10 @@ describe('Mio kernel through official loop and real JSONL', () => {
         }),
       ]);
       expect(ready).toEqual({ ready: true });
-      child.kill('SIGKILL');
+      await delay(100);
+      expect(child.exitCode, output).toBeNull();
+      expect(child.signalCode, output).toBeNull();
+      expect(child.kill('SIGKILL')).toBe(true);
       expect(await exited).toEqual([null, 'SIGKILL']);
       const fresh = await setup([textResponse('new response')], root);
       const stat = await fresh.ctx.sessionPersistence.stat(SessionId('hard-stop'));

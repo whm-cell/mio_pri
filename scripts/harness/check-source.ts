@@ -211,20 +211,28 @@ export async function checkSource(root: string, files: readonly string[], harnes
         resolved?.packageId?.name,
         packageName,
       ].some((name) => name === 'pg' || name === '@types/pg');
-      const conversationDatabase =
-        file === 'src/conversations/store.ts' || file === 'src/conversations/schema.ts';
+      const businessDatabase = [
+        'src/conversations/store.ts',
+        'src/conversations/schema.ts',
+        'src/providers/store.ts',
+        'src/providers/schema.ts',
+      ].includes(file);
       if (
         ((authPackage || specifier.startsWith('@better-auth/')) && !beneath(file, 'src/auth')) ||
-        (databasePackage && !beneath(file, 'src/auth') && !conversationDatabase)
+        (databasePackage && !beneath(file, 'src/auth') && !businessDatabase)
       )
         errors.push(
-          `AUTH_ADAPTER ${file}: authentication belongs in src/auth; PostgreSQL also permits conversation store/schema`,
+          `AUTH_ADAPTER ${file}: authentication belongs in src/auth; PostgreSQL also permits reviewed conversation/provider store/schema`,
         );
       if (file !== 'src/plugin.ts' && !beneath(file, 'src/dsh')) {
         if (
           specifier.startsWith('@deepseek-ai/') ||
+          specifier === '@earendil-works/pi-ai' ||
+          specifier.startsWith('@earendil-works/pi-ai/') ||
           resolved?.packageId?.name.startsWith('@deepseek-ai/') ||
-          packageName?.startsWith('@deepseek-ai/')
+          packageName?.startsWith('@deepseek-ai/') ||
+          resolved?.packageId?.name === '@earendil-works/pi-ai' ||
+          packageName === '@earendil-works/pi-ai'
         )
           errors.push(`DSH_BOUNDARY ${file}: framework access belongs in src/plugin.ts or src/dsh`);
       }
@@ -235,6 +243,11 @@ export async function checkSource(root: string, files: readonly string[], harnes
         if (roleOf(target) !== 'production') errors.push(`RUNTIME_DEPENDENCY ${file}: ${target}`);
         else {
           edges.push(target);
+          if (
+            (beneath(file, 'src/providers') || beneath(file, 'src/conversations')) &&
+            beneath(target, 'src/dsh')
+          )
+            errors.push(`DSH_BOUNDARY ${file}: business modules must not import src/dsh`);
           if (target === 'src/plugin.ts' && file !== target)
             errors.push(`ADAPTER_DIRECTION ${file}: ${target}`);
           if (file === 'src/contracts.ts')

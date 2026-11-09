@@ -3,6 +3,8 @@ import { kernelRuntime, modelOptions, ScriptedModel } from './kernel-runtime.ts'
 
 const root = process.argv[2];
 if (!root || !process.send) throw new Error('isolated root and IPC are required');
+// Keep the existing IPC channel alive until the parent sends SIGKILL.
+process.channel?.ref();
 const ctx = await kernelRuntime(root, new ScriptedModel(['hold']));
 const chunk = Promise.withResolvers<void>();
 const handle = await ctx.mioKernel.create('hard-stop', modelOptions, (agentCtx) => {

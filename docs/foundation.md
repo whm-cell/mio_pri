@@ -6,7 +6,11 @@
 
 当前底座提供基础 HTTP 探针、受保护的能力查询，以及可配置的账号认证与持久会话；认证配置、迁移、模块职责和业务验证边界在[认证底座](auth.md)维护，数据库驱动、资源约束与隔离测试按 [PostgreSQL 使用契约](integrations/postgres.md)查询。外部行为按[API 领域规范](apis/index.md)查询。工程护栏、任务协调和正式插件产物检查随仓库提供。
 
-项目、素材和生成业务尚未实现；[本地对话服务](conversations.md)的用户归属、多轮、持久回执、历史/SSE、取消和恢复已实现待接受，真实模型尚未配置。SaaS 多租户和模型工具授权不在本期范围，接受条件沿[对话 PRD](tasks/conversation-service/prd.md)，不能从账号会话或底座检查推导真实模型或生产就绪。
+项目、素材和生成业务尚未实现；[本地对话服务](conversations.md)的用户归属、多轮、持久回执、历史/SSE、取消和恢复已实现待接受，真实文本观察与业务接受分别核对。SaaS 多租户和模型工具授权不在本期范围，接受条件沿[对话 PRD](tasks/conversation-service/prd.md)，不能从账号会话或底座检查推导真实模型或生产就绪。
+
+[用户万联配置](providers.md)包含本人当前 Key 加密、显式四表迁移、稳定模型身份、动态成功目录/刷新状态、用途偏好与受控适配声明；职责沿[OneLinkAI 集成](integrations/onelink.md)。W1/W2 本地候选待分别验证和接受，目录成功不代表全部协议或真实业务已接受；生产工具策略继续全拒绝。
+
+W2 经固定公开 PiAiAdapter/协议工厂接入用户文本，DSH/pi-ai 依赖仅在插件/有界src/dsh，普通业务不反向导入。BYOK 使用 owner 当前配置/凭据/能力内存快照，既有 requestId 早于 fresh 解密检查；PG仅保存脱敏绑定和观察，正文仍归 DSH。无provider域保留显式legacy，BYOK不回退。默认文本闭环、另一协议观察、完整W2及原D1/D2接受分开，现行行为沿[对话规范](conversations.md)。
 
 需求、安排和未采纳设计从[任务资料](tasks/index.md)进入；已接受范围从[成果索引](tasks/index.md)查找。历史接受只绑定当时受验候选，不代替当前源码、业务验收或生产证据。
 

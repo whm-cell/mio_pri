@@ -3,22 +3,83 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/pr
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { afterEach, expect, it } from 'vitest';
 
 const project = resolve('.');
 const scratch: string[] = [];
+it.each([
+  '@earendil-works/pi-ai',
+  '@earendil-works/pi-ai/models',
+  '@earendil-works/pi-ai/api/openai-completions.lazy',
+])('confines the exact pi-ai public entry %s to the DSH adapter', async (entry) => {
+  for (const [file, status] of [
+    ['src/dsh/pi.ts', 0],
+    ['src/dsh-extra/pi.ts', 1],
+    ['src/providers/pi.ts', 1],
+  ] as const) {
+    const root = await fixture({ [file]: `export type * from '${entry}';` });
+    await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+    const result = check(root);
+    expect(result.status, result.output).toBe(status);
+    if (status) expect(result.output).toContain('DSH_BOUNDARY');
+  }
+});
+it('recognizes a pi-ai type alias and rejects business imports of the local DSH adapter', async () => {
+  const root = await fixture({ 'src/providers/alias.ts': "export type * from 'pi-alias';" });
+  await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+  const path = join(root, 'tsconfig.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  config.compilerOptions.paths = {
+    'pi-alias': [fileURLToPath(import.meta.resolve('@earendil-works/pi-ai/models'))],
+  };
+  await writeFile(path, JSON.stringify(config));
+  expect(check(root).output).toContain('DSH_BOUNDARY');
+  await writeFile(join(root, 'src/providers/alias.ts'), "export type * from '../dsh/pi.ts';");
+  await mkdir(join(root, 'src/dsh'), { recursive: true });
+  await writeFile(join(root, 'src/dsh/pi.ts'), 'export interface Value { id: string }');
+  expect(check(root).output).toContain('DSH_BOUNDARY');
+});
 afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
+
+it.each([
+  ['scripts/service/import-provider-adaptation.ts', 'src/providers/store.ts', 0],
+  ['scripts/service/import-provider-adaptation.ts', 'src/providers/catalog.ts', 1],
+  ['scripts/service/import-provider-adaptation.ts', 'src/providers/contracts.ts', 0],
+  ['scripts/service/import-provider-adaptation.ts', 'src/providers/service.ts', 1],
+  ['scripts/service/import-provider-adaptation.ts', 'src/providers-extra/store.ts', 1],
+  ['scripts/harness/deploy.ts', 'src/providers/store.ts', 1],
+] as const)(
+  'keeps deployment imports exact, including type aliases: %s -> %s',
+  async (caller, target, status) => {
+    const root = await fixture({
+      [target]: 'export interface Value { id: string }',
+      [caller]: "export type { Value } from 'deployment-target';",
+    });
+    const path = join(root, 'tsconfig.json');
+    const config = JSON.parse(await readFile(path, 'utf8'));
+    config.compilerOptions.paths = { 'deployment-target': [join(root, target)] };
+    await writeFile(path, JSON.stringify(config));
+    const result = check(root);
+    expect(result.status, result.output).toBe(status);
+    if (status) expect(result.output).toContain('DEVELOPMENT_DEPENDENCY');
+  },
+);
 
 it.each([
   ['src/conversations/store.ts', 0],
   ['src/conversations/schema.ts', 0],
   ['src/conversations/service.ts', 1],
   ['src/conversations-extra/store.ts', 1],
+  ['src/providers/store.ts', 0],
+  ['src/providers/schema.ts', 0],
+  ['src/providers/service.ts', 1],
+  ['src/providers-extra/store.ts', 1],
 ] as const)(
-  'limits conversation PostgreSQL imports to the two reviewed adapters: %s',
+  'limits business PostgreSQL imports to reviewed conversation/provider adapters: %s',
   async (file, status) => {
     const root = await fixture({ [file]: "export type { PoolConfig } from 'pg';" });
     await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
@@ -29,13 +90,16 @@ it.each([
 );
 
 it.each([
-  ['database-alias', 'pg', 0],
-  ['pg', 'better-auth', 1],
+  ['src/conversations/store.ts', 'database-alias', 'pg', 0],
+  ['src/conversations/store.ts', 'pg', 'better-auth', 1],
+  ['src/providers/store.ts', 'database-alias', 'pg', 0],
+  ['src/providers/store.ts', 'pg', 'better-auth', 1],
+  ['src/providers/service.ts', 'database-alias', 'pg', 1],
 ] as const)(
-  'keeps package identity checks behind conversation database aliases: %s -> %s',
-  async (alias, target, status) => {
+  'keeps package identity checks behind database aliases: %s, %s -> %s',
+  async (file, alias, target, status) => {
     const root = await fixture({
-      'src/conversations/store.ts': `import type * as Driver from '${alias}'; export type Value = typeof Driver;`,
+      [file]: `import type * as Driver from '${alias}'; export type Value = typeof Driver;`,
     });
     await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
     const configPath = join(root, 'tsconfig.json');

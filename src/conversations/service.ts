@@ -8,9 +8,15 @@ import type {
   Receipt,
 } from './contracts.ts';
 import type { ConversationStore } from './store.ts';
+import { ProviderError } from '../providers/contracts.ts';
+import type { ProviderService } from '../providers/service.ts';
 
 /** Authorization and request ownership remain above the DSH adapter and below HTTP. */
-export function createConversationService(store: ConversationStore, engine: ConversationEngine) {
+export function createConversationService(
+  store: ConversationStore,
+  engine: ConversationEngine,
+  providers?: Pick<ProviderService, 'selectChat' | 'resolveChat' | 'recordVerification'>,
+) {
   const pending = new Map<string, Promise<void>>();
   const receiving = new Map<string, { digest: string; job: Promise<Receipt> }>();
   const admissions = new Set<Promise<unknown>>();
@@ -39,18 +45,46 @@ export function createConversationService(store: ConversationStore, engine: Conv
     );
     return job;
   };
+  const providerAction = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof ProviderError) throw new ConversationError(error.status, error.code);
+      throw new ConversationError(503, 'MODEL_UNAVAILABLE');
+    }
+  };
   return {
-    create(actor: Principal): Promise<Conversation> {
+    create(actor: Principal, modelRef?: string): Promise<Conversation> {
       return admit(async () => {
-        const row = await store.create(actor, randomUUID());
+        if (!providers && modelRef) throw new ConversationError(503, 'MODEL_UNAVAILABLE');
+        const selection = providers
+          ? await providerAction(() => providers.selectChat(actor, modelRef))
+          : undefined;
+        const row = await store.create(actor, randomUUID(), selection);
         try {
-          await engine.create(row.dsh_session_id);
+          await engine.create(row.dsh_session_id, selection);
           await store.setReady(row.id, true);
         } catch {
           await store.setReady(row.id, false).catch(() => {});
           throw new ConversationError(503, 'CONVERSATION_UNKNOWN');
         }
-        return { id: row.id, createdAt: row.created_at.toISOString(), state: 'ready' as const };
+        return {
+          id: row.id,
+          createdAt: row.created_at.toISOString(),
+          state: 'ready' as const,
+          ...(selection ? { modelRef: selection.modelRef } : {}),
+        };
+      });
+    },
+    bind(actor: Principal, id: string, modelRef: string) {
+      return admit(async () => {
+        if (!providers) {
+          await store.owned(actor, id);
+          throw new ConversationError(503, 'MODEL_UNAVAILABLE');
+        }
+        return store.bind(actor, id, modelRef, () =>
+          providerAction(() => providers.selectChat(actor, modelRef)),
+        );
       });
     },
     list: (actor: Principal, after: string | undefined, limit: number) => {
@@ -79,7 +113,16 @@ export function createConversationService(store: ConversationStore, engine: Conv
       const job = admit(async () => {
         let received;
         try {
-          received = await store.receive(actor, id, requestId, digest, engine.available);
+          received = await store.receive(actor, id, requestId, digest, async (row) => {
+            if (providers) {
+              if (!row.model_binding)
+                throw new ConversationError(409, 'CONVERSATION_MODEL_REQUIRED');
+              return providerAction(() => providers.resolveChat(actor, row.model_binding!));
+            }
+            if (row.model_binding || !engine.available)
+              throw new ConversationError(503, 'MODEL_UNAVAILABLE');
+            return undefined;
+          });
         } catch (error) {
           if (!(error instanceof ConversationError) && !pending.has(key)) {
             try {
@@ -109,6 +152,27 @@ export function createConversationService(store: ConversationStore, engine: Conv
                     });
                   },
                   (event) => publish(id, event),
+                  received.snapshot
+                    ? {
+                        userId: actor.userId,
+                        conversationId: id,
+                        dshSessionId: received.row.dsh_session_id,
+                        requestId,
+                        snapshot: received.snapshot,
+                        observe: async (observation) => {
+                          await store.observe(id, requestId, observation);
+                          if (
+                            observation.status === 200 &&
+                            ['stop', 'max-tokens'].includes(observation.finish)
+                          ) {
+                            // The durable request observation remains authoritative if the separate provider DB is unavailable.
+                            await providers!
+                              .recordVerification(actor, received.snapshot!, `${id}:${requestId}`)
+                              .catch(() => console.error('PROVIDER_VERIFICATION_UNAVAILABLE'));
+                          }
+                        },
+                      }
+                    : undefined,
                 );
             publish(id, {
               type: 'state',

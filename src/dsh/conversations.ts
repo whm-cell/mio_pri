@@ -5,6 +5,8 @@ import type { TurnEndReason } from '@deepseek-ai/dsh-session';
 import type { ConversationConfig } from '../conversations/config.ts';
 import type { ConversationEngine, HistoryItem } from '../conversations/contracts.ts';
 import type {} from './kernel.ts';
+import { registerOneLink, onelinkRoute } from './onelink.ts';
+import type { ChatSelection } from '../providers/contracts.ts';
 
 /** Narrow bridge: DSH values stop here; only public text/status values leave it. */
 export function createDshConversationEngine(
@@ -17,11 +19,16 @@ export function createDshConversationEngine(
   >();
   const tasks = new Set<Promise<unknown>>();
   let closing: Promise<void> | undefined;
+  const onelink = config.byok ? registerOneLink(ctx) : undefined;
   const options = {
     ...(config.provider ? { provider: config.provider } : {}),
     ...(config.model ? { model: config.model } : {}),
     maxTokens: 1024,
   };
+  const selectedOptions = (selection?: ChatSelection) =>
+    selection
+      ? { provider: onelinkRoute(selection), model: selection.modelId, maxTokens: 1024 }
+      : options;
   return {
     get available() {
       return (
@@ -31,9 +38,9 @@ export function createDshConversationEngine(
         )
       );
     },
-    async create(id) {
+    async create(id, selection) {
       if (closing) throw new Error('MIO_ENGINE_CLOSED');
-      const handle = await ctx.mioKernel.create(id, options);
+      const handle = await ctx.mioKernel.create(id, selectedOptions(selection));
       try {
         await ctx.mioKernel.flush(handle.agent.session);
       } finally {
@@ -86,13 +93,45 @@ export function createDshConversationEngine(
         hasMore: items.length > limit,
       };
     },
-    run(id, requestId, text, durable, emit) {
+    run(id, requestId, text, durable, emit, binding) {
       if (closing || active.has(id)) return Promise.reject(new Error('MIO_ENGINE_BUSY'));
+      if (
+        config.byok &&
+        (!binding || binding.dshSessionId !== id || binding.requestId !== requestId)
+      )
+        return Promise.reject(new Error('MIO_BINDING_REQUIRED'));
+      const releases = new Map<AbortSignal, () => void>();
+      const runOptions = selectedOptions(binding?.snapshot);
+      let observationFailed = false;
+      const observedBinding = binding
+        ? {
+            ...binding,
+            observe: async (...args: Parameters<typeof binding.observe>) => {
+              try {
+                await binding.observe(...args);
+              } catch {
+                observationFailed = true;
+                throw new Error('MIO_OBSERVATION_UNKNOWN');
+              }
+            },
+          }
+        : undefined;
       let end: TurnEndReason | undefined;
       const entry = {
-        opening: ctx.mioKernel.resume(id, options, (agentCtx, agent) => {
-          if (config.provider && config.model)
-            agent.model.select({ provider: config.provider, model: config.model });
+        opening: ctx.mioKernel.resume(id, runOptions, (agentCtx, agent) => {
+          if (runOptions.provider && runOptions.model)
+            agent.model.select({ provider: runOptions.provider, model: runOptions.model });
+          if (observedBinding && onelink)
+            agentCtx.on('agent/pre-step', (payload, next) => {
+              if (
+                payload.agent.id !== observedBinding.dshSessionId ||
+                payload.modelSelection.provider !== runOptions.provider ||
+                payload.modelSelection.model !== observedBinding.snapshot.modelId
+              )
+                throw new Error('MIO_BINDING_MISMATCH');
+              releases.set(payload.signal, onelink.bind(payload.signal, observedBinding));
+              return next();
+            });
           agentCtx.on('agent/assistant-stream', ({ frame }) => {
             if (frame.type === 'chunk' && frame.chunk.type === 'text-delta')
               emit({ type: 'text', requestId, text: frame.chunk.text });
@@ -116,12 +155,17 @@ export function createDshConversationEngine(
           await durable();
           await handle.agent.whenIdle();
           await ctx.mioKernel.flush(handle.agent.session);
+          if (observationFailed) return 'unknown' as const;
           if (end?.kind === 'completed') return 'completed' as const;
           if (end?.kind === 'aborted' && end.reason.kind === 'user') return 'cancelled' as const;
           if (end?.kind === 'aborted' && end.reason.kind === 'disposed') return 'unknown' as const;
           return 'failed' as const;
         } finally {
-          await handle.dispose();
+          try {
+            await handle.dispose();
+          } finally {
+            for (const release of releases.values()) release();
+          }
         }
       })();
       tasks.add(running);

@@ -2,15 +2,17 @@
 
 [底座规则总览](../foundation.md#已采用规则与验证)。本页维护检查器的覆盖口径、依赖约束与维护验证；普通文档任务无需展开。
 
-开发模块的 `developmentDependencies` 按源码根声明：护栏／任务协调只导入 `scripts/harness/` 内部模块；服务工具允许自身模块及认证/对话显式迁移需要的配置与 schema，具体路径在配置声明，不取得运行时服务/池或护栏模块权限；总检查入口可组合各自命令。开发角色不等于职责边界，缺少开发模块依赖声明、越界类型／值导入导出、别名解析后的越界、未明确的动态目标和模块内循环都会报告错误。新增脚本须进入明确职责根，不能在宽泛 scripts 根静默取得权限。未采用运行时反射或进程沙箱作为静态依赖证明。
+开发模块的 `developmentDependencies` 按源码根声明：护栏／任务协调只导入 `scripts/harness/` 内部模块；服务工具允许自身模块及认证/对话/供应商迁移需要的配置与 schema。动态目录的受控部署导入另精确允许 `src/providers/store.ts`、`contracts.ts`，由存储入口统一完成归属、版本和声明校验，导入程序自持并关闭该域池；不开放整个业务目录、`catalog.ts` 或 `service.ts`。总检查入口可组合各自命令。开发角色不等于职责边界，类型、重导出和别名解析后的越界均受核对；静态规则不是任意子进程或网络副作用沙箱。
 
-认证包的生产导入限定于 `src/auth/`；PG 驱动另允许精确的 `src/conversations/store.ts` 与 `src/conversations/schema.ts`，不放开整个对话目录。认证包和数据库包分别按导入名称、解析包身份及真实归属判定，任一 PG 身份不能豁免同时识别出的认证身份；声明为 pg 但真实指向 BetterAuth 仍拒绝。服务迁移只可引用认证配置、对话配置及 schema，不能导入运行时服务/池；实际范围见 developmentDependencies。合法 PG 别名、精确存储路径及临近非法目录/真实认证包反例进入 `tests/guardrails.test.ts`。
+认证包的生产导入限定于 `src/auth/`；PG 驱动另允许精确的 `src/conversations/store.ts`、`src/conversations/schema.ts`、`src/providers/store.ts` 与 `src/providers/schema.ts`，不放开整个业务目录。认证包和数据库包分别按导入名称、解析包身份及真实归属判定，PG 身份不能豁免同时识别出的认证身份。服务迁移与部署声明入口的精确导入集合见 developmentDependencies；不授予认证内部池或护栏模块权限。合法 PG/部署别名及临近非法目录、type-only、跨职责反例进入 `tests/guardrails.test.ts`。
 
 Redis 驱动包的生产导入只允许 `src/integrations/redis.ts`；开发工具也不能直接或通过本职责内 helper 导入 Redis 驱动。公共 Redis 不反向依赖消费者、插件、脚本或测试，只允许独立公共契约作为本地依赖；插件和认证可消费公共资源，迁移工具仍由已有 developmentDependencies 禁止导入该运行模块。AST 与包归属解析覆盖类型导入、重导出和别名；真实 Redis 测试夹具允许导入驱动。新增文件继承 `src` / `tests` 既有分类、类型检查与构建范围，不为目录形状新增冗余配置。这是静态导入边界，不能拦截任意宿主子进程或网络副作用。正反例见同一 guardrail fixture。
 
 共同响应模块 `src/http-response.ts` 的依赖限定为 `node:http`、`node:crypto` 与解析后指向 `src/contracts.ts` 的本地模块；认证、插件入口、其他包和开发脚本均不可作为其依赖。现有 AST 导入/导出采集与模块解析同时检查 type-only、重导出、类型查询与别名路径，报告 `HTTP_RESPONSE_DEPENDENCY`；合法直接导入和契约别名、违规认证类型/重导出/别名等在同一 guardrail fixture 验证。此规则检查模块方向，不是对 Node 包内符号的数据流沙箱；实际实现只导入 HTTP/ApiError 类型与 UUID 函数，公开符号及真实消费者继续由 quality-review 核对，不据此宣称全部 `src` 内部方向均已隔离。
 
 已登记的 TS 文件还必须进入类型检查配置；生产 TS 必须同时进入构建配置。新增根目录仅登记归属不足以通过，检查器会对账编译器实际匹配的文件集合。
+
+W2 将精确的 `@earendil-works/pi-ai`（含 `/models`、`/api/*` 公开子路径）纳入同一 DSH 适配边界，按导入名、解析 packageId 与真实包归属识别，不放宽其他 npm 包。conversations/providers 不能反向导入本地 src/dsh。合法适配、临近非法目录、普通业务、type-only 别名及本地越界在同一 guardrail fixture 验证。
 
 体量统计来自 TypeScript AST：物理行数（含注释/空行）、函数声明跨度、语法块嵌套深度、if/循环/case/catch/条件表达式节点数。`decisionNodes` 是文件级分支信号，不是完整圈复杂度或算法复杂度；职责聚合、时间/空间成本由相关变更审阅。配置/文档/生成文件不计入业务源码指标。依赖声明采用 `skipLibCheck`，严格类型检查覆盖本项目；第三方声明内部仍由依赖兼容与装载测试补充。
 

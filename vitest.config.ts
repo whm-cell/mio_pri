@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  test: { include: ['tests/**/*.test.ts'], testTimeout: 15000, hookTimeout: 15000 },
+  test: {
+    include: ['tests/**/*.test.ts'],
+    setupFiles: ['./tests/providers-setup.ts'],
+    testTimeout: 15000,
+    hookTimeout: 15000,
+  },
 });

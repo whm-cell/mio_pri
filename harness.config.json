@@ -11,7 +11,11 @@
       "scripts/service",
       "src/auth/config.ts",
       "src/conversations/config.ts",
-      "src/conversations/schema.ts"
+      "src/conversations/schema.ts",
+      "src/providers/config.ts",
+      "src/providers/schema.ts",
+      "src/providers/store.ts",
+      "src/providers/contracts.ts"
     ]
   },
   "documentRoots": ["README.md", "AGENTS.md", "docs"],
@@ -54,6 +58,11 @@
       "identity": "docs/tasks/conversation-service/prd.md",
       "kind": "prd",
       "path": "docs/tasks/conversation-service/prd.md"
+    },
+    {
+      "identity": "docs/tasks/onelink-integration/prd.md",
+      "kind": "prd",
+      "path": "docs/tasks/onelink-integration/prd.md"
     }
   ]
 }

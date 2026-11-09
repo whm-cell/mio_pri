@@ -13,8 +13,14 @@ import { denyModelTools } from './dsh/policy.ts';
 import { readConversationConfig } from './conversations/config.ts';
 import { createConversationStore } from './conversations/store.ts';
 import { createConversationService } from './conversations/service.ts';
+import type { ConversationService } from './conversations/service.ts';
 import { createConversationHandler } from './conversations/http.ts';
 import { createDshConversationEngine } from './dsh/conversations.ts';
+import { readProviderConfig } from './providers/config.ts';
+import { createProviderStore } from './providers/store.ts';
+import { createProviderService } from './providers/service.ts';
+import type { ProviderService } from './providers/service.ts';
+import { createProviderHandler } from './providers/http.ts';
 
 export const name = 'mio-foundation';
 export const inject = ['webServer', 'tools'];
@@ -34,7 +40,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // Deny before awaiting optional dependencies, including when authentication startup fails.
   denyModelTools(ctx);
   const authConfig = readAuthConfig();
-  const conversationConfig = readConversationConfig();
+  const providerConfig = readProviderConfig();
+  const conversationConfig = readConversationConfig(process.env, Boolean(providerConfig));
   const handler = createHandler({
     token: process.env[config.tokenEnv] ?? '',
     allowedOrigins: config.allowedOrigins,
@@ -44,6 +51,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   if (conversationConfig && !authConfig)
     throw new Error('CONVERSATION_CONFIG: authentication required');
+  if (providerConfig && !authConfig) throw new Error('PROVIDER_CONFIG: authentication required');
   const backend = readAuthRateLimitBackend();
   if (backend === 'redis' && !authConfig)
     throw new Error('AUTH_CONFIG: authentication is required for Redis rate limiting');
@@ -73,6 +81,40 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         handler: authHandler,
       }),
     );
+    let providers: ProviderService | undefined;
+    let conversations: ConversationService | undefined;
+    if (providerConfig) {
+      const store = await createProviderStore(providerConfig);
+      providers = createProviderService(store, providerConfig);
+      const ownedProviders = providers;
+      try {
+        ctx.effect(() => async () => {
+          // Parent/child effects may unload concurrently: explicitly join admission and run teardown.
+          const failures: unknown[] = [];
+          try {
+            await conversations?.close();
+          } catch (error) {
+            failures.push(error);
+          }
+          try {
+            await ownedProviders.close();
+          } catch (error) {
+            failures.push(error);
+          }
+          if (failures.length) throw new AggregateError(failures, 'Mio resource cleanup failed');
+        });
+        ctx.effect(() =>
+          ctx.webServer.register({
+            kind: 'prefix',
+            path: '/api/v1/providers/onelink',
+            handler: createProviderHandler(ownedProviders, auth.identity, authConfig.origins),
+          }),
+        );
+      } catch (error) {
+        await ownedProviders.close();
+        throw error;
+      }
+    }
     if (conversationConfig) {
       if (!ctx.get('mioKernel')) throw new Error('CONVERSATION_CONFIG: DSH kernel required');
       await ctx.plugin({
@@ -80,26 +122,36 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         inject: ['mioKernel', 'llm', 'webServer'],
         async apply(conversationCtx: Context) {
           const store = await createConversationStore(conversationConfig.databaseURL);
-          const conversations = createConversationService(
-            store,
-            createDshConversationEngine(conversationCtx, conversationConfig),
-          );
-          const http = createConversationHandler(conversations, auth.identity, authConfig.origins);
+          let acquired: ConversationService | undefined;
+          let http: ReturnType<typeof createConversationHandler> | undefined;
           try {
+            const ownedConversations =
+              (conversations =
+              acquired =
+                createConversationService(
+                  store,
+                  createDshConversationEngine(conversationCtx, conversationConfig),
+                  providers,
+                ));
+            const ownedHttp = (http = createConversationHandler(
+              ownedConversations,
+              auth.identity,
+              authConfig.origins,
+            ));
             conversationCtx.effect(() => async () => {
-              http.close();
-              await conversations.close();
+              ownedHttp.close();
+              await ownedConversations.close();
             });
             conversationCtx.effect(() =>
               conversationCtx.webServer.register({
                 kind: 'prefix',
                 path: '/api/v1/conversations',
-                handler: http.handler,
+                handler: ownedHttp.handler,
               }),
             );
           } catch (error) {
-            http.close();
-            await conversations.close();
+            http?.close();
+            await (acquired ? acquired.close() : store.close());
             throw error;
           }
         },

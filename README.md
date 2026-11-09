@@ -1,6 +1,6 @@
 # Mio 插件服务底座
 
-本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。提供基础 HTTP、账号认证及全部拒绝的工具策略；已实现待接受的[本地对话服务](docs/conversations.md)，包括用户归属、多轮、原生内容持久化、历史、SSE 与取消。真实模型尚未配置，项目/生成业务未实现。认证边界见[认证底座](docs/auth.md)，内核边界见 [DSH 契约](docs/integrations/dsh.md)，接受条件见[对话 PRD](docs/tasks/conversation-service/prd.md)。
+本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。提供基础 HTTP、账号认证及全部拒绝的工具策略；已实现待接受的[本地对话服务](docs/conversations.md)，包括用户归属、BYOK 文本、多轮、原生内容持久化、历史、SSE 与取消。真实文本观察与完整业务接受分别核对，项目/媒体生成尚未实现。认证边界见[认证底座](docs/auth.md)，内核边界见 [DSH 契约](docs/integrations/dsh.md)，接受条件见[对话 PRD](docs/tasks/conversation-service/prd.md)。
 
 - [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)
@@ -8,6 +8,7 @@
 - [HTTP API](docs/api.md)
 - [账号注册、登录与会话配置](docs/auth.md)
 - [本地对话配置、迁移与恢复](docs/conversations.md)
+- [用户万联 Key、目录与显式迁移](docs/providers.md)
 - [基础设施与外部集成契约](docs/integrations/index.md)
 - [验收标准与入口](docs/acceptance.md)
 - [PRD 成果索引](docs/tasks/index.md)
@@ -39,6 +40,10 @@ pnpm check
 ```
 
 `check` 执行格式、类型、lint、文档/结构/索引护栏、测试、构建和官方 Profile 产物 smoke。安装不执行依赖构建脚本；当前最小 Profile 不使用需要额外原生构建的运行能力。
+
+万联 W1/W2 的动态目录、稳定模型身份及文本消费者已形成待验证/接受的本地实现，按[供应商规范](docs/providers.md)配置本域数据库与主密钥并显式迁移。分库历史引用迁移、部署适配声明和使用方式以该页为准；新 ID 由当前 Key 目录发现，不维护生产型号白名单。普通检查不自动访问万联；真实目录/文本须另行显式授权。目录成功不等于全部协议、媒体或生产验收。
+
+W2 启用 provider 域后，对话创建使用准确 modelRef 或本人显式 chat 默认，旧无绑定会话由 owner 一次绑定；按[对话 API](docs/apis/conversations.md)操作并显式执行增量 `conversations:migrate --apply`。未启用 provider 域时保留显式 legacy 路由，BYOK 缺配置不回退。独立真实入口为 `node tests/conversations-live.ts <authorized-private-key-file> [exact-model-id]`，默认 deepseek-v4.1-flash，不进入普通check；文本已获无调用上限授权，媒体、工具、部署和人类接受不随之开放。
 
 ## 本地运行
 

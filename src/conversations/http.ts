@@ -96,6 +96,7 @@ export function createConversationHandler(
       const receiptId = parts[2];
       let method: string | undefined;
       if (base) method = request.method === 'POST' ? 'POST' : 'GET';
+      else if (id && uuid.test(id) && parts.length === 2 && action === 'model') method = 'PUT';
       else if (
         id &&
         uuid.test(id) &&
@@ -133,9 +134,9 @@ export function createConversationHandler(
         response.setHeader('allow', base ? 'GET, POST, OPTIONS' : `${method}, OPTIONS`);
         return fail(405, 'METHOD_NOT_ALLOWED');
       }
-      if (method === 'POST' && !origin) return fail(403, 'ORIGIN_REQUIRED');
+      if (method !== 'GET' && !origin) return fail(403, 'ORIGIN_REQUIRED');
       if (
-        method === 'POST' &&
+        method !== 'GET' &&
         request.headers['content-type']?.split(';')[0]?.trim() !== 'application/json'
       )
         return fail(415, 'JSON_REQUIRED');
@@ -143,19 +144,37 @@ export function createConversationHandler(
       if (request.headers.cookie) headers.set('cookie', request.headers.cookie);
       let actor = await identity(headers);
       if (!actor) return fail(401, 'UNAUTHORIZED');
-      const value = method === 'POST' ? await body(request) : {};
-      if (method === 'POST') {
+      const value = method !== 'GET' ? await body(request) : {};
+      if (method !== 'GET') {
         actor = await identity(headers);
         if (!actor) return fail(401, 'UNAUTHORIZED');
       }
-      const expected = action === 'messages' ? ['requestId', 'text'] : [];
+      const expected =
+        action === 'messages'
+          ? ['requestId', 'text']
+          : (base && method === 'POST') || action === 'model'
+            ? ['modelRef']
+            : [];
       if (Object.keys(value).some((key) => !expected.includes(key)))
         return fail(400, 'BODY_INVALID');
       const send = (status: number, value: unknown) => {
         response.writeHead(status, { 'content-type': 'application/json' });
         response.end(JSON.stringify(value));
       };
-      if (base && method === 'POST') return send(201, await service.create(actor));
+      if (
+        ((base && method === 'POST') || action === 'model') &&
+        value.modelRef !== undefined &&
+        (typeof value.modelRef !== 'string' ||
+          !value.modelRef ||
+          Buffer.byteLength(value.modelRef) > 512)
+      )
+        return fail(400, 'BODY_INVALID');
+      if (base && method === 'POST')
+        return send(201, await service.create(actor, value.modelRef as string | undefined));
+      if (action === 'model') {
+        if (typeof value.modelRef !== 'string') return fail(400, 'BODY_INVALID');
+        return send(200, await service.bind(actor, id!, value.modelRef));
+      }
       if (base) {
         const after = url.searchParams.get('after') ?? undefined;
         if (after && !uuid.test(after)) return fail(400, 'QUERY_INVALID');

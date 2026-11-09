@@ -4,7 +4,11 @@
 
 Mio 固定采用 `0.2.2-rc.1` 的官方公开 Agent、Agent Loop、LLM、Session、Session Projection、JSONL Persistence、Session Query 冷读接口，以及既有 System Prompt、Tools 和 Native Executor。[内核入口](../../src/dsh/kernel.ts)只管理公开 AgentHandle 和生命周期；模型请求、inbox、上下文与结算仍由官方 loop 负责。
 
-[正式 Profile](../../cordis.patch.yml)逐项装配必要服务，不加载 SDK/Web 默认 Bundle、Shell、文件工具、MCP、自动重试或模拟模型。默认没有模型供应商；显式选择 deepseek-official 才加载固定版官方 API-key 适配。配置及当前路由选择见[本地对话服务](../conversations.md)，没有真实配置/授权不能执行真实模型验收。无对话数据库仍保留原 foundation 路径；能力查询的 sessions 只反映是否装载对话入口。
+[正式 Profile](../../cordis.patch.yml)逐项装配必要服务，不加载 SDK/Web 默认 Bundle、Shell、文件工具、MCP、自动重试或模拟模型。未启用 provider 域时保留显式 legacy deepseek-official；启用后由 Mio 注册固定 OneLink 文本路由，缺本人配置不回退。配置见[对话规范](../conversations.md)，无对话数据库保留 foundation 路径；sessions 只反映对话入口是否装配。
+
+[OneLink 包装](../../src/dsh/onelink.ts)只使用固定发布包 PiAiAdapter、公开 createProvider 和协议工厂，不复制 Agent/codec。公开 agent/pre-step 将同一可信 run 快照绑定到 turn AbortSignal；resolve/metadata/prepare 消费该冻结模型/目录/适配事实，prepare 捕获同一绑定，dispatch 核对原 signal、Session、model/provider 和 purpose。无 owner 的全局 listModels 返回空，不能返回各用户目录并集；无可信 signal 的 resolve/prepare 拒绝且不解密。Key 不入 Session。当前 Profile 只有官方 loop 发起 LLM；未来新增提前解析 metadata 或持有 turn signal 的辅助插件时须重新核对授权。
+
+未知 context 在外层 metadata 省略；有来源声明时通过公开 `context.contextWindow` 传递同一快照。inner 0 是固定 SDK 1.5.0 的内部未知标记，SDK 必填 cost 的 0 也不是供应商价格。1024 是 Mio 输出政策，不是供应商最大能力。每请求的 createProvider 只包含已准入精确 ID，可编码未在 SDK 内置目录中的模型。保留官方 usage/finish、工具块和 replay；错误在进入 JSONL 前投影为固定安全诊断，取消 consumer return 也保存安全观察。正式工具守卫不变。
 
 接入只用发布包，不依赖本机相邻源码。上游公开接口核对基线为提交 `66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`；升级时重新核对本文时序。
 

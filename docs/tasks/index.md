@@ -6,7 +6,7 @@
 | --------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
 | ai-drama-foundation   | [需求](ai-drama-foundation/prd.md) · [设计](ai-drama-foundation/design.md) | [已接受成果](ai-drama-foundation/complete/report.md)   |
 | auth-rate-limit-redis | [需求](auth-rate-limit-redis/prd.md)                                       | [已接受成果](auth-rate-limit-redis/complete/report.md) |
-| conversation-service  | [需求](conversation-service/prd.md)                                        | 暂无                                                   |
+| conversation-service  | [需求](conversation-service/prd.md)                                        | [已接受成果](conversation-service/complete/report.md)  |
 | onelink-integration   | [需求](onelink-integration/prd.md)                                         | 暂无                                                   |
 
 ```mio-prd-index
@@ -25,6 +25,13 @@
       "report": {
         "path": "docs/tasks/auth-rate-limit-redis/complete/report.md",
         "sha256": "ec4646acffc23512d865474863d0d533dd573333b4c976ab02b01b0abe91a48e"
+      }
+    },
+    {
+      "prd": "docs/tasks/conversation-service/prd.md",
+      "report": {
+        "path": "docs/tasks/conversation-service/complete/report.md",
+        "sha256": "af8485a08b95c6c4aaa246888102d166061403e4a76ac323d9831eee433fe402"
       }
     }
   ]

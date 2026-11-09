@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 import type { Context } from '@deepseek-ai/cordis';
 import WebServer from '@deepseek-ai/dsh-host-webserver';
 import type { StreamChunk } from '@deepseek-ai/dsh-llm';
+import { SessionId } from '@deepseek-ai/dsh-session';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import * as Mio from '../src/plugin.ts';
 import * as Stores from '../src/conversations/store.ts';
@@ -261,6 +262,93 @@ it('enforces real user ownership, strict inputs, bounded lists and second-round 
   ).json()) as { items: unknown[] };
   expect(second.items).toHaveLength(2);
   expect(JSON.stringify([first, second])).not.toContain('mio-test-only');
+});
+
+it.each(['native-create', 'native-flush', 'metadata-ready'] as const)(
+  'keeps a failed %s creation queryable as unknown without executing a model',
+  async (failure) => {
+    const before = new Set(
+      (await observer.query<{ id: string }>('SELECT id FROM mio_conversations')).rows.map(
+        (row) => row.id,
+      ),
+    );
+    const initial = model.requests.length;
+    const createFailure =
+      failure === 'native-create'
+        ? vi.spyOn(ctx.mioKernel, 'create').mockRejectedValueOnce(new Error('private-create'))
+        : undefined;
+    const detach =
+      failure === 'native-flush'
+        ? ctx.on('session/flush', () => {
+            throw new Error('private-flush');
+          })
+        : undefined;
+    if (failure === 'metadata-ready')
+      await observer.query(
+        `CREATE FUNCTION mio_fail_ready() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='ready' THEN RAISE EXCEPTION 'private-ready'; END IF; RETURN NEW; END $$; CREATE TRIGGER mio_fail_ready BEFORE UPDATE ON mio_conversations FOR EACH ROW EXECUTE FUNCTION mio_fail_ready()`,
+      );
+    try {
+      const response = await call('/api/v1/conversations', {});
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({ error: { code: 'CONVERSATION_UNKNOWN' } });
+      const rows = (
+        await observer.query<{ id: string; state: string }>(
+          'SELECT id,state FROM mio_conversations',
+        )
+      ).rows.filter((row) => !before.has(row.id));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.state).toBe('unknown');
+      const listed = (await (await call('/api/v1/conversations?limit=100')).json()) as {
+        items: { id: string; state: string }[];
+      };
+      expect(listed.items).toContainEqual(expect.objectContaining(rows[0]!));
+      expect((await send(rows[0]!.id, 'failed-create', 'must not execute')).status).toBe(409);
+      expect(model.requests.length).toBe(initial);
+    } finally {
+      createFailure?.mockRestore();
+      detach?.();
+      if (failure === 'metadata-ready')
+        await observer.query(
+          'DROP TRIGGER mio_fail_ready ON mio_conversations; DROP FUNCTION mio_fail_ready()',
+        );
+    }
+    expect(await create()).toBeTruthy();
+  },
+);
+
+it('fails closed on corrupt durable public history without exposing native diagnostics', async () => {
+  const id = await create();
+  script.push(textResponse('private-history-content'));
+  await send(id, 'before-corruption', 'durable input');
+  expect((await terminal(id, 'before-corruption')).status).toBe('completed');
+  const initial = model.requests.length;
+  const target = (
+    await observer.query<{ dsh_session_id: string }>(
+      'SELECT dsh_session_id FROM mio_conversations WHERE id=$1',
+      [id],
+    )
+  ).rows[0]!.dsh_session_id;
+  expect(ctx.sessions.get(SessionId(target))).toBeFalsy();
+  const stat = await ctx.sessionPersistence.stat(SessionId(target));
+  if (stat?.location?.kind !== 'jsonl') throw new Error('missing isolated JSONL location');
+  const original = await readFile(stat.location.path, 'utf8');
+  const corrupt = original.replace('"type":"user/message"', '"type":"ptc/retired-required"');
+  expect(corrupt).not.toBe(original);
+  try {
+    await writeFile(stat.location.path, corrupt);
+    const response = await call(path(id, 'history'));
+    expect(response.status).toBe(503);
+    const body = await response.text();
+    expect(body).not.toContain('private-history-content');
+    expect(body).not.toContain('ptc/retired-required');
+    expect(body).not.toContain(stat.location.path);
+    expect((await call(path(id, 'history'), undefined, otherCookie)).status).toBe(404);
+    expect((await terminal(id, 'before-corruption')).status).toBe('completed');
+    expect(model.requests.length).toBe(initial);
+  } finally {
+    await writeFile(stat.location.path, original);
+  }
+  expect((await call(path(id, 'history'))).status).toBe(200);
 });
 
 it('rejects busy input, de-duplicates reception and preserves a queryable cancelled result', async () => {

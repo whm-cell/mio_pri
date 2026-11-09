@@ -9,7 +9,12 @@ import { authDatabase } from './auth-database.ts';
 import { packedAuthRuntime } from './auth-runtime.ts';
 import { importDeclaration } from './fixtures/provider-declaration.ts';
 
-const diagnostic: { phase: string; httpStatus?: number; serviceCode?: string } = {
+const diagnostic: {
+  phase: string;
+  httpStatus?: number;
+  serviceCode?: string;
+  cancellation?: { requested: boolean; requestId: string };
+} = {
   phase: 'credential-input',
 };
 /** Explicit live process only; Vitest never discovers or imports this entry. No secret is printed. */
@@ -38,6 +43,9 @@ async function main() {
   let runtime: Awaited<ReturnType<typeof packedAuthRuntime>> | undefined;
   let streamAbort: AbortController | undefined;
   let reading: Promise<void> | undefined;
+  const seen: { requestId: string; text: string }[] = [];
+  const terminalFrames = new Map<string, string>();
+  let streamState = 'not-opened';
   try {
     const master = randomBytes(32).toString('base64');
     const env = {
@@ -151,7 +159,6 @@ async function main() {
     const conversation = (await created.json()) as { id: string; modelRef: string };
     assert.equal(conversation.modelRef, model.modelRef);
     const id = conversation.id;
-    const seen: { requestId: string; text: string }[] = [];
     const cancelText = Promise.withResolvers<void>();
     streamAbort = new AbortController();
     const stream = await fetch(`${origin}/api/v1/conversations/${id}/events`, {
@@ -160,13 +167,17 @@ async function main() {
     });
     assert.equal(stream.status, 200);
     const reader = stream.body!.getReader();
+    streamState = 'reading';
     reading = (async () => {
       let buffer = '';
       const decoder = new TextDecoder();
       try {
         for (;;) {
           const part = await reader.read();
-          if (part.done) break;
+          if (part.done) {
+            streamState = 'ended';
+            break;
+          }
           buffer += decoder.decode(part.value, { stream: true });
           let split: number;
           while ((split = buffer.indexOf('\n\n')) >= 0) {
@@ -178,17 +189,27 @@ async function main() {
               type: string;
               requestId?: string;
               text?: string;
+              receipt?: { requestId: string; status: string };
             };
             if (event.type === 'text' && event.requestId && event.text) {
               seen.push({ requestId: event.requestId, text: event.text });
               if (event.requestId === 'live-cancel') cancelText.resolve();
             }
+            if (
+              event.type === 'state' &&
+              event.receipt &&
+              ['completed', 'cancelled', 'failed', 'unknown'].includes(event.receipt.status)
+            )
+              terminalFrames.set(event.receipt.requestId, event.receipt.status);
           }
         }
       } catch {
+        streamState = streamAbort?.signal.aborted ? 'aborted' : 'failed';
         if (!streamAbort?.signal.aborted) throw new Error('LIVE_STREAM_FAILED');
       }
     })();
+    // Observe early rejection; the original promise is still awaited and must fail the run.
+    void reading.catch(() => {});
     const send = (requestId: string, text: string) =>
       call(`/api/v1/conversations/${id}/messages`, 'POST', { requestId, text });
     const terminal = async (requestId: string) => {
@@ -213,10 +234,11 @@ async function main() {
                 fees: 'unknown',
               }),
             );
+            return value;
           }
-          return value;
+          if (terminalFrames.get(requestId) === value.status) return value;
         }
-        assert(Date.now() < deadline);
+        assert(Date.now() < deadline, 'Receipt and SSE terminal did not agree before deadline');
         await delay(100);
       }
     };
@@ -250,16 +272,20 @@ async function main() {
       ).status,
       202,
     );
+    diagnostic.phase = 'live-cancel-wait-first-text';
     await Promise.race([
       cancelText.promise,
       delay(60_000, undefined, { ref: false }).then(() => {
         throw new Error('LIVE_TEXT_TIMEOUT');
       }),
     ]);
+    diagnostic.phase = 'live-cancel-request';
     const cancelled = await call(`/api/v1/conversations/${id}/cancel`, 'POST', {});
     assert.equal(cancelled.status, 202);
     const cancellation = (await cancelled.json()) as { requested: boolean; requestId: string };
+    diagnostic.cancellation = cancellation;
     assert(cancellation.requested && cancellation.requestId === 'live-cancel');
+    diagnostic.phase = 'live-cancel-terminal';
     const cancelReceipt = await terminal('live-cancel');
     assert.equal(cancelReceipt.status, 'cancelled');
     streamAbort.abort();
@@ -334,11 +360,38 @@ async function main() {
         catalogDiscovered: discovery.ids.includes(modelId),
         requests: observations,
         sseTextFrames: seen.length,
+        sseTerminalStates: Object.fromEntries(terminalFrames),
         cancellation: cancelReceipt.status,
         restart: 'no replay',
         fees: 'unknown',
       }),
     );
+  } catch (error) {
+    // Keep failure facts before isolated cleanup; never print arbitrary error messages or text.
+    try {
+      const requests = await observer.query(
+        'SELECT request_id,status,error_code,model_binding,model_observations FROM mio_conversation_requests ORDER BY created_at',
+      );
+      const observation = JSON.stringify({
+        result: 'failed-run-observation',
+        ...diagnostic,
+        requests: requests.rows,
+        sseTextFrames: Object.fromEntries(
+          [...new Set(seen.map((frame) => frame.requestId))].map((requestId) => [
+            requestId,
+            seen.filter((frame) => frame.requestId === requestId).length,
+          ]),
+        ),
+        sseTerminalStates: Object.fromEntries(terminalFrames),
+        streamState,
+        fees: 'unknown',
+      });
+      assert(!observation.includes(apiKey));
+      console.error(observation);
+    } catch {
+      console.error(JSON.stringify({ result: 'failed-observation-unavailable' }));
+    }
+    throw error;
   } finally {
     streamAbort?.abort();
     await reading?.catch(() => {});

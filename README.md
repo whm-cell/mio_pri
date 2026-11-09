@@ -1,6 +1,6 @@
 # Mio 插件服务底座
 
-本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。提供基础 HTTP、账号认证及全部拒绝的工具策略；已实现待接受的[本地对话服务](docs/conversations.md)，包括用户归属、BYOK 文本、多轮、原生内容持久化、历史、SSE 与取消。真实文本观察与完整业务接受分别核对，项目/媒体生成尚未实现。认证边界见[认证底座](docs/auth.md)，内核边界见 [DSH 契约](docs/integrations/dsh.md)，接受条件见[对话 PRD](docs/tasks/conversation-service/prd.md)。
+本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。提供基础 HTTP、账号认证及全部拒绝的工具策略；[本地对话服务](docs/conversations.md)包括用户归属、BYOK 文本、多轮、原生内容持久化、历史、SSE 与取消，其 D1/D2 本地结果及已披露限制已获用户接受，范围见[成果入口](docs/tasks/conversation-service/complete/report.md)。W2 仍独立验收，项目/媒体生成尚未实现。认证边界见[认证底座](docs/auth.md)，内核边界见 [DSH 契约](docs/integrations/dsh.md)，接受条件见[对话 PRD](docs/tasks/conversation-service/prd.md)。
 
 - [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)

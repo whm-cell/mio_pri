@@ -1,6 +1,6 @@
 # 本地对话服务
 
-本期实现只接收测试账号和测试内容，尚未接受或取得生产部署验收。真实文本观察按实际候选记录，不能代替 D1/D2/W2 各自接受。真实用户内容保留/删除与上线容量另定；没有删除接口不代表无限保留授权。需求与接受条件见[对话 PRD](tasks/conversation-service/prd.md)，公开协议见[对话 HTTP](apis/conversations.md)。
+本期实现只接收测试账号和测试内容，D1/D2 本地交付结果及已披露限制已获用户接受，范围见[成果入口](tasks/conversation-service/complete/report.md)，尚无生产部署验收。真实文本观察按实际候选记录，不能代替 W2 的独立接受，Messages 真实验收继续单独 pending。真实用户内容保留/删除与上线容量另定；没有删除接口不代表无限保留授权。需求与接受条件见[对话 PRD](tasks/conversation-service/prd.md)，公开协议见[对话 HTTP](apis/conversations.md)。
 
 ## 配置与迁移
 

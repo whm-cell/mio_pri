@@ -139,9 +139,13 @@ export function contractIssues(task: Task): string[] {
       'WORK_RESULT_REQUIRED: declare plan.result for development, or explicit null for work with no development result; inspect the actual goal before implementation',
     );
   for (const criterion of task.plan.acceptance) {
-    if (criterion.method === 'automated' && !criterion.command)
+    if (
+      ['C1_EVIDENCE_PENDING', 'C1_RELEASED'].includes(task.stage ?? '') &&
+      criterion.method === 'automated' &&
+      !criterion.command
+    )
       errors.push(
-        `WORK_CHECK_COMMAND: declare acceptance ${criterion.id}.command as the complete check argv before implementation or verification`,
+        `WORK_CHECK_COMMAND: declare acceptance ${criterion.id}.command as the complete check argv before collecting evidence`,
       );
   }
   for (const key of ['goal', 'authorization', 'nextAction', 'stopCondition'] as const) {

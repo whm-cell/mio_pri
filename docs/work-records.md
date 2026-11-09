@@ -56,7 +56,7 @@ Agent 依 [拆解与生命周期](coordination.md#开始任务) 从公共 PRD／
 
 requirement 由公共文档 source、实际章节 section 和 Agent 首次拆解选定的稳定 key 组成；key 用小写字母、数字、连字符或下划线，最多 80 字符。工具用 source＋key 生成 task ID，section 参与契约核对；新建须对应当前公共 Markdown 中唯一的真实标题文字，内联格式按 AST 读取，围栏里的假标题不算；标题可定位不证明需求语义正确，任务是否重复仍由实际审阅判断。不要因为换会话、改下一步或重试而更换 key；先 status 查询已有任务。续接可只传同一 requirement，返回原进度与证据，不创建替代目录或自动同步；不存在时须提供 plan.goal 才允许创建。已有任务中显式提交的 plan 字段不相同时报 WORK_CONFLICT，应查看原 context 后 update。
 
-plan 的目标、范围、授权和验收来自真实任务。scope 是允许写入的文件／目录；inputs 默认 package.json 与 harness.config.json，再补实际依赖；sources 只登记实际遵循的需求子文档，requirement.source 自动参与摘要。method 为 automated／review／behavior；automated 还声明完整检查的 `command` argv，取证见[记录证据](#记录证据)。其余字段按需填，不复制空模板。示例不授予权限，工具不认证授权文本的来源。
+plan 的目标、范围、授权和验收来自真实任务。scope 是允许写入的文件／目录；inputs 默认 package.json 与 harness.config.json，再补实际依赖；sources 只登记实际遵循的需求子文档，requirement.source 自动参与摘要。实施前明确验收目标及 automated／review／behavior 方法；automated 完整检查的 `command` argv 按[记录证据](#记录证据)在正式取证前确定。其余字段按需填，不复制空模板。示例不授予权限，工具不认证授权文本的来源。
 
 首次 ensure 保存初始检查点，完整且无阻塞的契约进入 C0_READY；不完整的记录保持草稿。ensure 退出成功表示已创建或读取记录，能否执行仍需核对 assessment 并展开必要引用。Agent 确认授权和依赖后用 update 标记实施，不会为每轮会话另建记录。原有 v1 任务和 `.work/evidence` 不迁移、不删除；新 clone 从仓库内生成器落地本人目录。
 
@@ -151,7 +151,7 @@ pnpm work run api-probe checks
 pnpm work evidence api-probe review pass .work/tasks/api-probe/evidence/review.md "实际审查范围、观察与限制"
 ```
 
-run／evidence 先经 update 进入 C1_EVIDENCE_PENDING 并给出当前下一步；失败的阶段更新不能由取证补成成功。验收 ID 来自本任务 acceptance。automated 的 `command` 在实施／取证前声明，省略 argv 时 run 执行它；命令及其实际读取的脚本／配置须覆盖完整判据并纳入候选输入，不从命令名称推断覆盖。旧记录缺 command 时先补当前声明，不自动采信历史最后一条命令。
+run／evidence 先经 update 进入 C1_EVIDENCE_PENDING 并给出当前下一步；失败的阶段更新不能由取证补成成功。验收 ID 来自本任务 acceptance。C0／实施可暂缺 automated 的 `command`；取证阶段缺项会明确报错并阻止 run／evidence，包括显式传入 argv。可返回实施补齐检查脚本，阶段转换按目标阶段核验，现场漂移等检查仍有效。缺命令的自动验收保持 pending，不能 prepare／complete；已提供的非法命令始终拒绝。正式取证前确定完整命令及其实际读取的脚本／配置，覆盖原验收判据并纳入候选输入，审阅变化后 sync，不从命令名称推断覆盖。省略 argv 时 run 执行声明命令；旧记录不自动采信历史最后一条命令。
 
 显式 `run <task> <criterion> -- <argv ...>` 可执行补测；argv 与声明相同才是完整检查，其余标为 supplemental，保留独立原件，无需新增验收项或切阶段。核验读取当前候选最近一次完整检查及其后的补测：没有完整检查不能通过；完整失败不能被局部成功替代；后续补测的失败、未知、缺失、损坏或无效原件也阻断，其他补测成功不能清除。排查后重新完整检查方可恢复通过，旧失败保留。声明命令改变属于验收契约变化，不能把完整命令改窄来消除失败。
 

@@ -189,18 +189,16 @@ it.each(['missing', 'corrupt'])(
   },
 );
 
-it('requires explicit result and check declarations before implementation or evidence commands', async () => {
+it('requires an explicit result before implementation or evidence commands', async () => {
   const root = await fixture();
   await ready(root);
   // Model a readable legacy record, not a new classification inferred by the tool.
   await edit(root, (task) => {
     delete task.plan.result;
-    delete task.plan.acceptance[0]!.command;
   });
   const before = await readFile(statePath(root), 'utf8');
   const context = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
   expect(context.assessment.errors.join('\n')).toContain('WORK_RESULT_REQUIRED');
-  expect(context.assessment.errors.join('\n')).toContain('WORK_CHECK_COMMAND');
   expect(await readFile(statePath(root), 'utf8')).toBe(before);
   const blocked = invoke(root, ['update', 'probe', '--stdin'], {
     revision: context.revision,
@@ -236,6 +234,144 @@ it('requires explicit result and check declarations before implementation or evi
   await implementing(root);
   verifying(root);
   expect(invoke(root, ['run', 'probe', 'checks']).status).toBe(0);
+});
+
+it('rejects malformed declared commands before creating a task', async () => {
+  const root = await fixture();
+  const request = proposal();
+  for (const command of [[], [''], [42], 'node']) {
+    const rejected = invoke(root, ['ensure', '--stdin'], {
+      ...request,
+      plan: { ...request.plan, acceptance: [{ ...request.plan.acceptance[0], command }] },
+    });
+    expect(rejected.status).toBe(1);
+    expect(rejected.output).toContain('WORK_SCHEMA');
+    expect(JSON.parse(invoke(root, ['status']).output).tasks).toEqual([]);
+  }
+});
+
+it('allows implementation before choosing a check command but blocks evidence until it is declared', async () => {
+  const root = await fixture();
+  const request = proposal();
+  const created = JSON.parse(
+    invoke(root, ['ensure', '--stdin'], {
+      ...request,
+      plan: {
+        ...request.plan,
+        acceptance: [
+          { id: 'checks', criterion: 'The implemented value is 2.', method: 'automated' },
+        ],
+      },
+    }).output,
+  );
+  const id = created.task.id as string;
+  expect(created.task.stage).toBe('C0_READY');
+  expect(created.assessment.ready).toBe(true);
+  expect(created.assessment.evidence[0].result).toBe('pending');
+  const implementation = invoke(root, ['update', id, '--stdin'], {
+    revision: created.revision,
+    reason: 'The result and method are known; develop the implementation and its check.',
+    stage: 'C1_IMPLEMENTATION',
+    plan: { nextAction: 'Implement the value and its check.' },
+  });
+  expect(implementation.status, implementation.output).toBe(0);
+  expect(
+    invoke(root, [
+      'exec',
+      id,
+      '--',
+      process.execPath,
+      '-e',
+      'require("node:fs").writeFileSync("src/value.ts", "export const value = 2;\\n")',
+    ]).status,
+  ).toBe(0);
+  expect(await readFile(join(root, 'src/value.ts'), 'utf8')).toContain('value = 2');
+  expect(invoke(root, ['sync', id, 'Inspected the implemented value.']).status).toBe(0);
+  verifying(root, id);
+  const before = await state(root, id);
+  const pending = JSON.parse(invoke(root, ['context', id, 'verify']).output);
+  expect(pending.assessment.errors.join()).toContain('WORK_CHECK_COMMAND');
+  expect(pending.assessment.readyForAcceptance).toBe(false);
+  for (const argv of [
+    ['run', id, 'checks'],
+    [
+      'run',
+      id,
+      'checks',
+      '--',
+      process.execPath,
+      '-e',
+      'require("node:fs").writeFileSync(".work/forbidden", "bad")',
+    ],
+    ['evidence', id, 'quality-review', 'pass', '.work/missing.md', 'Cannot bypass missing command'],
+  ])
+    expect(invoke(root, argv).output).toContain('WORK_CHECK_COMMAND');
+  await expect(readFile(join(root, '.work/forbidden'))).rejects.toThrow();
+  expect((await state(root, id)).evidence).toEqual(before.evidence);
+  const returned = invoke(root, ['update', id, '--stdin'], {
+    revision: pending.revision,
+    reason: 'Return to authorized implementation to create the check script.',
+    stage: 'C1_IMPLEMENTATION',
+    plan: { nextAction: 'Create the value check, then declare its command.' },
+  });
+  expect(returned.status, returned.output).toBe(0);
+  expect((await state(root, id)).checkpoint!.candidate).toBe(before.checkpoint!.candidate);
+  const script =
+    'import assert from "node:assert/strict"; import { value } from "./value.ts"; assert.equal(value, 2);\n';
+  expect(
+    invoke(root, [
+      'exec',
+      id,
+      '--',
+      process.execPath,
+      '-e',
+      `require("node:fs").writeFileSync("src/check.ts", ${JSON.stringify(script)})`,
+    ]).status,
+  ).toBe(0);
+  const current = JSON.parse(invoke(root, ['context', id, 'resume']).output);
+  const declared = invoke(root, ['update', id, '--stdin'], {
+    revision: current.revision,
+    reason: 'The implemented check now covers the original value criterion.',
+    plan: {
+      acceptance: (await state(root, id)).plan.acceptance.map((entry) =>
+        entry.id === 'checks' ? { ...entry, command: [process.execPath, 'src/check.ts'] } : entry,
+      ),
+    },
+  });
+  expect(declared.status, declared.output).toBe(0);
+  expect(JSON.parse(declared.output).assessment.errors.join()).toContain('WORK_CONTEXT_CHANGED');
+  expect(invoke(root, ['sync', id, 'Reviewed the check implementation and command.']).status).toBe(
+    0,
+  );
+  verifying(root, id);
+  expect((await state(root, id)).checkpoint!.candidate).not.toBe(before.checkpoint!.candidate);
+  expect(invoke(root, ['run', id, 'checks']).status).toBe(0);
+  expect(JSON.parse(invoke(root, ['check', id]).output).evidence[0].result).toBe('pass');
+});
+
+it('still rejects actual drift when returning from missing-command verification to implementation', async () => {
+  const root = await fixture();
+  await ready(root);
+  await edit(root, (task) => {
+    delete task.plan.acceptance[0]!.command;
+  });
+  invoke(root, ['sync', 'probe', 'Inspected the missing command contract.']);
+  verifying(root);
+  await writeFile(join(root, 'src/value.ts'), 'export const value = 3;\n');
+  const current = JSON.parse(invoke(root, ['context', 'probe', 'resume']).output);
+  const before = await readFile(statePath(root), 'utf8');
+  const rejected = invoke(root, ['update', 'probe', '--stdin'], {
+    revision: current.revision,
+    reason: 'Attempt a phase change without acknowledging changed inputs.',
+    stage: 'C1_IMPLEMENTATION',
+    plan: { nextAction: 'Implement the missing check.' },
+  });
+  expect(rejected.status).toBe(1);
+  expect(rejected.output).toContain('WORK_CONTEXT_CHANGED');
+  expect(await readFile(statePath(root), 'utf8')).toBe(before);
+  invoke(root, ['sync', 'probe', 'Inspected the changed value before resuming implementation.']);
+  await implementing(root);
+  expect((await state(root)).stage).toBe('C1_IMPLEMENTATION');
 });
 
 it('preserves evidence across phase updates but invalidates it when the declared check changes', async () => {

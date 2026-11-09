@@ -493,6 +493,39 @@ it('keeps maintenance local and archives without creating public results', async
   expect(await publicFiles(root)).toEqual(before);
 });
 
+it.each(['C1_IMPLEMENTATION', 'C1_EVIDENCE_PENDING'])(
+  'never prepares or completes a missing-command result in %s',
+  async (stage) => {
+    const root = await fixture();
+    await setup(root);
+    await prepare(root);
+    const complete = await completeRequest(root);
+    const { task, raw } = await loadTask(root, 'probe');
+    const originals = task.evidence;
+    delete task.plan.acceptance[0]!.command;
+    task.stage = stage;
+    task.checkpoint = await capture(root, task);
+    await saveTask(root, task, raw);
+    const before = await publicFiles(root);
+    const assessment = await assess(root, task);
+    expect(assessment.evidence.find((entry) => entry.criterion === 'checks')!.result).toBe(
+      'pending',
+    );
+    expect(assessment.readyForAcceptance).toBe(false);
+    await expect(prepare(root)).rejects.toThrow(/WORK_CHECK_COMMAND|WORK_DELIVERY_EVIDENCE/);
+    await expect(
+      deliver(
+        root,
+        'probe',
+        json({ ...complete, revision: digest((await loadTask(root, 'probe')).raw) }),
+      ),
+    ).rejects.toThrow(/WORK_CHECK_COMMAND|WORK_DELIVERY_EVIDENCE|WORK_DELIVERY_STALE/);
+    expect(await publicFiles(root)).toEqual(before);
+    expect((await loadTask(root, 'probe')).task.evidence).toEqual(originals);
+    expect((await loadTask(root, 'probe')).task.delivery!.accepted).toBeUndefined();
+  },
+);
+
 it('binds the complete check and later supplements in the acceptance draft', async () => {
   const root = await fixture();
   await setup(root);

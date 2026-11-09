@@ -220,7 +220,11 @@ export async function updateTask(root: string, id: string, raw: string) {
     if (!['C1_IMPLEMENTATION', 'C1_EVIDENCE_PENDING'].includes(request.stage as string))
       throw new Error('WORK_REQUEST: update cannot record release or human acceptance');
     if (request.stage === 'C1_IMPLEMENTATION') {
-      const assessment = await assess(root, task, { reconciling: true });
+      const assessment = await assess(
+        root,
+        { ...task, stage: 'C1_IMPLEMENTATION' },
+        { reconciling: true },
+      );
       if (!assessment.ready)
         throw new Error(
           [

@@ -1,6 +1,6 @@
 # Mio 插件服务底座
 
-独立 TypeScript 插件包，由官方 DeepSeek Harness Profile 启动。当前提供工程护栏、基础 HTTP 探针、受保护的能力查询、可配置的账号认证与持久会话，以及全部拒绝的模型工具策略；项目、生成业务和创作对话尚未交付。认证配置与边界见[认证底座](docs/auth.md)。
+本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。当前提供工程护栏、基础 HTTP 探针、受保护的能力查询、可配置的账号认证与持久会话，以及全部拒绝的模型工具策略；项目、生成业务和对话服务尚未交付。认证配置与边界见[认证底座](docs/auth.md)，近期对话能力的候选安排见[后端对话服务 PRD](docs/tasks/conversation-service/prd.md)。
 
 - [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)

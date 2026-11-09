@@ -44,6 +44,11 @@
       "identity": "docs/tasks/auth-rate-limit-redis/prd.md",
       "kind": "prd",
       "path": "docs/tasks/auth-rate-limit-redis/prd.md"
+    },
+    {
+      "identity": "docs/tasks/conversation-service/prd.md",
+      "kind": "prd",
+      "path": "docs/tasks/conversation-service/prd.md"
     }
   ]
 }

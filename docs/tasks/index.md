@@ -6,6 +6,7 @@
 | --------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
 | ai-drama-foundation   | [需求](ai-drama-foundation/prd.md) · [设计](ai-drama-foundation/design.md) | [已接受成果](ai-drama-foundation/complete/report.md)   |
 | auth-rate-limit-redis | [需求](auth-rate-limit-redis/prd.md)                                       | [已接受成果](auth-rate-limit-redis/complete/report.md) |
+| conversation-service  | [需求](conversation-service/prd.md)                                        | 暂无                                                   |
 
 ```mio-prd-index
 {

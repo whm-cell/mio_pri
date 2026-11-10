@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "identity": "docs/tasks/compute-service/prd.md",
+      "kind": "prd",
+      "path": "docs/tasks/compute-service/prd.md"
+    },
+    {
+      "identity": "docs/tasks/compute-service/design.md",
+      "kind": "design",
+      "path": "docs/tasks/compute-service/design.md"
+    }
+  ]
+}

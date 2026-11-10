@@ -24,6 +24,7 @@ import { readOptions } from './read-options.ts';
 import { readStatus } from './read-status.ts';
 import { assessmentOutput, inspectionOutput, readTask } from './read-task.ts';
 import { readPublicResult } from './public-read.ts';
+import { bookPaths, readBook } from './reports.ts';
 import { runCommand, withTaskCommand } from './command.ts';
 import type { CommandActivity } from './command.ts';
 import {
@@ -96,7 +97,30 @@ async function main(activity?: CommandActivity) {
         identity: entry.identity,
         currentPath: entry.path,
         aliases: entry.aliases ?? [],
+        registry: entry.registry,
       })),
+      results: issues.length
+        ? []
+        : await Promise.all(
+            registry.documents
+              .filter((entry) => entry.kind === 'prd')
+              .map(async (entry) => {
+                const catalog = {
+                  config,
+                  documents: registry.documents,
+                  registries: registry.registries,
+                };
+                const paths = bookPaths(entry.identity, catalog);
+                const { book, source } = await readBook(root, entry.identity, catalog);
+                return {
+                  prd: entry.identity,
+                  report: source === null ? null : paths.report,
+                  records: source === null ? null : paths.records,
+                  keys: book.results.map((result) => result.key),
+                  read: ['read-result', entry.identity],
+                };
+              }),
+          ),
       issues,
     };
     console.log(

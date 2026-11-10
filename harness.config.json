@@ -37,32 +37,5 @@
     ".npmrc",
     "cordis.patch.yml",
     ".editorconfig"
-  ],
-  "taskDocuments": [
-    {
-      "identity": "docs/prd-ai-drama-foundation.md",
-      "kind": "prd",
-      "path": "docs/tasks/ai-drama-foundation/prd.md"
-    },
-    {
-      "identity": "docs/architecture-ai-drama-foundation.md",
-      "kind": "design",
-      "path": "docs/tasks/ai-drama-foundation/design.md"
-    },
-    {
-      "identity": "docs/tasks/auth-rate-limit-redis/prd.md",
-      "kind": "prd",
-      "path": "docs/tasks/auth-rate-limit-redis/prd.md"
-    },
-    {
-      "identity": "docs/tasks/conversation-service/prd.md",
-      "kind": "prd",
-      "path": "docs/tasks/conversation-service/prd.md"
-    },
-    {
-      "identity": "docs/tasks/onelink-integration/prd.md",
-      "kind": "prd",
-      "path": "docs/tasks/onelink-integration/prd.md"
-    }
   ]
 }

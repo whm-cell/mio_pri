@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { beneath, loadConfig } from './inventory.ts';
 import type { HarnessConfig, TaskDocument } from './inventory.ts';
@@ -10,6 +10,9 @@ import { prdDirectory } from './work/compact-store.ts';
 export const resultDocument = (path: string) =>
   /^docs\/tasks\/[a-z0-9][a-z0-9_-]*\/complete\//.test(path);
 export const taskNavigation = (path: string) => path === 'docs/tasks/index.md';
+interface RegisteredTaskDocument extends TaskDocument {
+  registry: string;
+}
 
 export function publicDocument(path: string, config: HarnessConfig): boolean {
   return (
@@ -75,41 +78,89 @@ function redirectOnly(source: string, alias: string, entry: TaskDocument, paths:
   }
 }
 
-/** Read-only validation of the single registry; legacy fixtures may omit the field entirely. */
+/** Discover one local registry per PRD while retaining global identity and ownership checks. */
 export async function inspectTaskDocuments(root: string, config: HarnessConfig) {
-  const documents: TaskDocument[] = [];
+  const documents: RegisteredTaskDocument[] = [];
+  const registries: string[] = [];
   const errors: string[] = [];
   const claimed = new Set<string>();
-  if (config.taskDocuments !== undefined && !Array.isArray(config.taskDocuments))
-    return { documents, errors: ['TASK_DOCUMENT_SCHEMA: taskDocuments must be an array'] };
-  for (const value of config.taskDocuments ?? []) {
+  if ('taskDocuments' in config)
+    errors.push('TASK_DOCUMENT_SCHEMA: taskDocuments is retired; use each PRD documents.json');
+  const directory = await checkedPath(root, 'docs/tasks');
+  const entries = await readdir(directory, { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'ENOENT') throw error;
+      return [];
+    },
+  );
+  for (const child of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!child.isDirectory() && !child.isSymbolicLink()) continue;
+    const registry = `docs/tasks/${child.name}/documents.json`;
+    let values: unknown[];
     try {
-      const entry = documentShape(value);
-      const files = new Set([entry.path, ...(entry.aliases ?? [])]);
-      for (const path of new Set([entry.identity, ...files])) {
-        if (claimed.has(path)) throw new Error(`TASK_DOCUMENT_DUPLICATE: ${path}`);
-        claimed.add(path);
-        if (!publicDocument(path, config) || resultDocument(path) || taskNavigation(path))
-          throw new Error(`TASK_DOCUMENT_PUBLIC: ${path}`);
-        const target = await checkedPath(root, path);
-        // Stable identities remain resolvable after optional navigation pages are retired.
-        const file = await stat(target).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-        });
-        if (files.has(path) && !file?.isFile()) throw new Error(`TASK_DOCUMENT_FILE: ${path}`);
-        if (!files.has(path) && file)
-          throw new Error(
-            `TASK_DOCUMENT_IDENTITY: existing ${path} must be the current path or a declared alias`,
-          );
-      }
-      if (entry.aliases?.includes(entry.path))
-        throw new Error(`TASK_DOCUMENT_DUPLICATE: current path is also an alias ${entry.path}`);
-      documents.push(entry);
+      const target = await checkedPath(root, registry);
+      const source = await readFile(target, 'utf8').catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (source === null) continue;
+      registries.push(registry);
+      const value = JSON.parse(source);
+      if (
+        !/^[a-z0-9][a-z0-9_-]*$/.test(child.name) ||
+        !value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        Object.keys(value).some((key) => !['version', 'documents'].includes(key)) ||
+        value.version !== 1 ||
+        !Array.isArray(value.documents) ||
+        !value.documents.length
+      )
+        throw new Error('TASK_DOCUMENT_SCHEMA: expected version 1 and nonempty documents array');
+      values = value.documents;
     } catch (error) {
       errors.push(
-        `TASK_DOCUMENT_INVALID: ${error instanceof Error ? error.message : String(error)}`,
+        `TASK_DOCUMENT_INVALID: ${registry}: ${error instanceof Error ? error.message : String(error)}`,
       );
+      continue;
     }
+    const local: RegisteredTaskDocument[] = [];
+    for (const value of values) {
+      try {
+        const entry = documentShape(value);
+        if (!beneath(entry.path, dirname(registry)))
+          throw new Error(
+            `TASK_DOCUMENT_OWNER: ${entry.path}: must belong to ${dirname(registry)}`,
+          );
+        const files = new Set([entry.path, ...(entry.aliases ?? [])]);
+        for (const path of new Set([entry.identity, ...files])) {
+          if (claimed.has(path)) throw new Error(`TASK_DOCUMENT_DUPLICATE: ${path}`);
+          claimed.add(path);
+          if (!publicDocument(path, config) || resultDocument(path) || taskNavigation(path))
+            throw new Error(`TASK_DOCUMENT_PUBLIC: ${path}`);
+          const target = await checkedPath(root, path);
+          // Stable identities remain resolvable after optional navigation pages are retired.
+          const file = await stat(target).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== 'ENOENT') throw error;
+          });
+          if (files.has(path) && !file?.isFile()) throw new Error(`TASK_DOCUMENT_FILE: ${path}`);
+          if (!files.has(path) && file)
+            throw new Error(
+              `TASK_DOCUMENT_IDENTITY: existing ${path} must be the current path or a declared alias`,
+            );
+        }
+        if (entry.aliases?.includes(entry.path))
+          throw new Error(`TASK_DOCUMENT_DUPLICATE: current path is also an alias ${entry.path}`);
+        local.push({ ...entry, registry });
+      } catch (error) {
+        errors.push(
+          `TASK_DOCUMENT_INVALID: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (local.filter((entry) => entry.kind === 'prd').length !== 1)
+      errors.push(`TASK_DOCUMENT_OWNER: ${registry}: require exactly one PRD`);
+    documents.push(...local);
   }
   const paths = new Set(documents.map((entry) => entry.path));
   const owners = new Set<string>();
@@ -139,14 +190,14 @@ export async function inspectTaskDocuments(root: string, config: HarnessConfig) 
         errors.push(`TASK_DOCUMENT_REDIRECT: ${alias}: retain short navigation only`);
     }
   }
-  return { documents, errors };
+  return { documents, registries, errors };
 }
 
 export async function documentCatalog(root: string, config?: HarnessConfig) {
   const current = config ?? (await loadConfig(root));
   const registry = await inspectTaskDocuments(root, current);
   if (registry.errors.length) throw new Error(registry.errors.join('\n'));
-  return { config: current, documents: registry.documents };
+  return { config: current, documents: registry.documents, registries: registry.registries };
 }
 
 /** New requests normalize identities. Historical parsers and accepted manifests never call this. */

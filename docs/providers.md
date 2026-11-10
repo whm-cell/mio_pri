@@ -1,6 +1,6 @@
 # 用户万联配置与动态模型目录
 
-每个登录用户持有一个逻辑 `onelink` 配置；身份沿[认证底座](auth.md)，接口正文见[供应商 HTTP](apis/providers.md)，出站见[万联集成](integrations/onelink.md)。[万联 PRD](tasks/onelink-integration/prd.md)维护需求。当前 W1/W2 为待核验、待接受的本地实现；本期核验动态目录、模型扩展及默认文本，Claude/Messages 进一步适配与真实验收为后续项，保留现有实现与确定性回归；目录、协议实现、真实观察和业务接受分别判定。
+每个登录用户持有一个逻辑 `onelink` 配置；身份沿[认证底座](auth.md)，接口正文见[供应商 HTTP](apis/providers.md)，出站见[万联集成](integrations/onelink.md)。[万联 PRD](tasks/onelink-integration/prd.md)维护需求与安排，实际接受范围和限制见其[成果入口](tasks/onelink-integration/complete/report.md)。目录、协议实现、真实观察和业务接受分别判定。
 
 ## 配置与迁移
 
@@ -28,7 +28,7 @@ Key 仅由凭据写入口接收。AES-256-GCM 使用随机 12 字节 nonce、16 
 
 轮换原位替换密文、递增 credentialVersion，保留启停、水印、模型身份、适配和偏好/default 目标；旧成员成为 historical，旧成功目录保留历史版本但不授予新凭据资格。新版本必须显式成功发现。当前只保存当前密文，不提供历史 Key 平台。重启须注入同一主密钥和 ID；缺失在配置阶段拒绝，错误密钥/篡改在解密时拒绝，不回退。
 
-[存储](../src/providers/store.ts)自持最多 5 个连接、连接/查询等待各 5 秒。所有变更在配置行锁下串行；初建 owner 唯一约束及客户端 expectedRevision 防并发覆盖。刷新开始和完成、配置/偏好及适配声明更新递增 revision。关闭取消并等待发现，再关闭池；W2 先收敛对话运行再关闭本域，沿[PostgreSQL](integrations/postgres.md)。
+[存储](../src/providers/store.ts)自持最多 5 个连接、连接/查询等待各 5 秒。所有变更在配置行锁下串行；初建 owner 唯一约束及客户端 expectedRevision 防并发覆盖。刷新开始和完成、配置/偏好及适配声明更新递增 revision。关闭取消并等待发现，先收敛对话运行再关闭本域池；即使对话清理失败也释放本域并保留错误。共同资源约束沿[PostgreSQL](integrations/postgres.md)。
 
 ## 目录、刷新与资格
 
@@ -78,9 +78,9 @@ classification 可省略；可选 `metadata.contextWindow` 只能是有来源的
 
 新精确 ID 经成功目录发现后可关联已有且实际兼容的 profile，不新增生产型号名单。声明仅接受字符串形式的已实现 profile；未知或非字符串值拒绝。运行适配层显式选择路由、codec、端点及兼容项，未知值不落入 OpenAI 默认路径。参数差异或新协议须有实际依据，在适配边界补实现、必要准入/存储约束及回归；配置不创造能力，也不重建稳定身份、账号或会话。
 
-本期保留两协议确定性测试，真实文本使用当前目录精确 DeepSeek。Messages 后续未验不阻塞本期，也不能展示为已验证；触发及验收见[万联 PRD](tasks/onelink-integration/prd.md#对话验收衔接)。
+各协议分别保留确定性回归与真实观察，某个模型或协议通过不推导其他目标已验证；实际核验目标、未验条件与接受范围见[万联 PRD](tasks/onelink-integration/prd.md#对话验收衔接)及其成果。
 
-## W2 消费与验证入口
+## 文本消费与验证入口
 
 selectChat 一致读取本人配置、目录、适配、偏好，不解密。fresh resolveChat 核对同一逻辑身份并冻结稳定模型键、raw ID、凭据/目录/声明版本及 operation/profile，再解密到请求内存。已有 requestId 先返回原回执，当前资格变化不重发；在途运行不换版本。详情见[对话规范](conversations.md)。
 

@@ -1,3 +1,5 @@
+import type { TaskDocument } from '../scripts/harness/inventory.ts';
+import { writeTaskDocuments } from './task-documents-fixture.ts';
 import { spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -38,12 +40,10 @@ async function fixture(scope = ['src'], development = true) {
     await cp(join(project, file), join(root, file));
   }
   // Development results belong to this fixture's registered PRD directory.
-  const configPath = join(root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  config.taskDocuments = [
+  const documents: TaskDocument[] = [
     { identity: 'docs/tasks/quality/prd.md', kind: 'prd', path: 'docs/tasks/quality/prd.md' },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(root, documents);
   for (const [file, value] of Object.entries({
     'package.json': '{"type":"module"}',
     'AGENTS.md': '# Fixture rules',
@@ -393,9 +393,7 @@ it('allows only current normative pages and an explicitly justified empty set', 
     join(f.root, 'docs/compat-prd.md'),
     '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
   );
-  const configPath = join(f.root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  config.taskDocuments = [
+  const documents: TaskDocument[] = [
     {
       identity: 'docs/compat-prd.md',
       kind: 'prd',
@@ -408,7 +406,7 @@ it('allows only current normative pages and an explicitly justified empty set', 
       path: 'docs/tasks/example/proposal.md',
     },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(f.root, documents);
   const plan = (await f.state()).plan;
   for (const path of [
     'docs/compat-prd.md',
@@ -486,14 +484,12 @@ it('checks declared requirement and design current pages without duplicating ord
   for (const path of [prd, design, proposal, 'docs/norm.md', 'docs/unlisted.md', 'docs/index.md'])
     await writeFile(join(f.root, path), `# Fixture ${path}\n`);
   await writeFile(join(f.root, alias), '# 资料已迁移\n\n[当前资料](tasks/example/prd.md)\n');
-  const configPath = join(f.root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  config.taskDocuments = [
+  const registeredDocuments: TaskDocument[] = [
     { identity: alias, kind: 'prd', path: prd, aliases: [alias] },
     { identity: design, kind: 'design', path: design },
     { identity: proposal, kind: 'proposal', path: proposal },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(f.root, registeredDocuments);
   const updated = cli(f.root, ['update', f.id, '--stdin'], {
     revision: f.context().revision,
     reason: 'Declare the fixture requirement and unadopted design sources before reviewing them.',

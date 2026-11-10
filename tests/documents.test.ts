@@ -5,9 +5,10 @@ import { dirname, join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { checkDocuments } from '../scripts/harness/check-documents.ts';
 import { inventory } from '../scripts/harness/inventory.ts';
-import type { HarnessConfig } from '../scripts/harness/inventory.ts';
+import type { HarnessConfig, TaskDocument } from '../scripts/harness/inventory.ts';
 import { headingAnchors, markdownLinks, parseMarkdown } from '../scripts/harness/markdown.ts';
-import { renderIndex } from '../scripts/harness/work/reports.ts';
+import { taskDocumentFiles, taskIndex, writeTaskDocuments } from './task-documents-fixture.ts';
+import { inspectTaskDocuments } from '../scripts/harness/task-documents.ts';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -39,7 +40,10 @@ async function fixture(extra: Record<string, string> = {}) {
   }
   return root;
 }
-async function errors(root: string, configuration = config) {
+type FixtureConfig = HarnessConfig & { documents?: TaskDocument[] };
+async function errors(root: string, configuration: FixtureConfig = config) {
+  if (configuration.documents)
+    await writeTaskDocuments(root, configuration.documents, 'docs/tasks/example');
   return (await checkDocuments(root, (await inventory(root, configuration)).files, configuration))
     .errors;
 }
@@ -140,9 +144,9 @@ it('rejects duplicate endpoint identities, malformed locations, missing fields a
   expect(result).toContain('API_ENDPOINT_INVALID docs/apis/other.md: GTE /bad');
 });
 
-const taskConfig: HarnessConfig = {
+const taskConfig: FixtureConfig = {
   ...config,
-  taskDocuments: [
+  documents: [
     {
       identity: 'docs/old-prd.md',
       kind: 'prd',
@@ -154,8 +158,9 @@ const taskConfig: HarnessConfig = {
 async function taskFixture(extra: Record<string, string> = {}) {
   return fixture({
     'docs/index.md': '[API](apis/index.md) [Guide](guide.md) [Tasks](tasks/index.md)\n',
-    'harness.config.json': JSON.stringify(taskConfig),
-    'docs/tasks/index.md': renderIndex({ version: 5, prds: [] }, taskConfig.taskDocuments!),
+    'harness.config.json': JSON.stringify(config),
+    ...taskDocumentFiles(taskConfig.documents!),
+    'docs/tasks/index.md': taskIndex,
     'docs/tasks/example/prd.md': '# Requirement\n\n## Old section\n',
     'docs/old-prd.md':
       '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n\n- <a id="old-section"></a>[Old section](../docs/tasks/example/prd.md#old-section)\n',
@@ -189,10 +194,10 @@ it('classifies task documents and keeps compatibility aliases as navigation leav
 
 it('allows a stable identity without a redirect file while requiring real targets and declared aliases', async () => {
   const root = await taskFixture();
-  const entry = { ...taskConfig.taskDocuments![0]!, aliases: [] };
-  const registry = { ...taskConfig, taskDocuments: [entry] };
+  const entry = { ...taskConfig.documents![0]!, aliases: [] };
+  const registry = { ...taskConfig, documents: [entry] };
   await rm(join(root, entry.identity));
-  await writeFile(join(root, 'harness.config.json'), JSON.stringify(registry));
+  await writeFile(join(root, 'harness.config.json'), JSON.stringify(config));
   expect(await errors(root, registry)).toEqual([]);
   // Retiring a navigation page does not make an ordinary Markdown link to it valid.
   await writeFile(join(root, entry.path), '# Requirement\n\n[Retired](../../old-prd.md)\n');
@@ -211,7 +216,7 @@ it('rejects a stable identity that shadows an existing ordinary document', async
   const root = await taskFixture();
   const checked = await errors(root, {
     ...taskConfig,
-    taskDocuments: [{ ...taskConfig.taskDocuments![0]!, identity: 'docs/guide.md', aliases: [] }],
+    documents: [{ ...taskConfig.documents![0]!, identity: 'docs/guide.md', aliases: [] }],
   });
   expect(checked.some((error) => error.includes('TASK_DOCUMENT_IDENTITY'))).toBe(true);
 });
@@ -222,7 +227,7 @@ it.each(['../outside.md', '.work/private.md', 'docs/../outside.md', 'docs/.env.s
     const root = await taskFixture();
     const checked = await errors(root, {
       ...taskConfig,
-      taskDocuments: [{ ...taskConfig.taskDocuments![0]!, identity, aliases: [] }],
+      documents: [{ ...taskConfig.documents![0]!, identity, aliases: [] }],
     });
     expect(checked.some((error) => error.includes('TASK_DOCUMENT_INVALID'))).toBe(true);
   },
@@ -257,26 +262,26 @@ it('does not discover active requirements or current norms through accepted-resu
 });
 
 it('rejects duplicate identities, current paths and aliases, missing targets, and substantive alias prose', async () => {
-  const root = await taskFixture({ 'docs/tasks/another.md': '# Another\n' });
-  const first = taskConfig.taskDocuments![0]!;
+  const root = await taskFixture({ 'docs/tasks/example/another.md': '# Another\n' });
+  const first = taskConfig.documents![0]!;
   for (const entry of [
     { ...first },
     { ...first, identity: 'docs/tasks/example/prd.md', aliases: [] },
     {
       ...first,
-      identity: 'docs/tasks/another.md',
-      path: 'docs/tasks/another.md',
+      identity: 'docs/tasks/example/another.md',
+      path: 'docs/tasks/example/another.md',
       aliases: ['docs/old-prd.md'],
     },
   ]) {
-    const checked = await errors(root, { ...taskConfig, taskDocuments: [first, entry] });
+    const checked = await errors(root, { ...taskConfig, documents: [first, entry] });
     expect(checked.some((error) => error.includes('TASK_DOCUMENT_DUPLICATE'))).toBe(true);
   }
   expect(
     (
       await errors(root, {
         ...taskConfig,
-        taskDocuments: [
+        documents: [
           {
             identity: 'docs/tasks/missing.md',
             kind: 'proposal',
@@ -308,7 +313,7 @@ it.each([
     await symlink(join(root, 'docs/tasks/example/prd.md'), join(root, path));
   const checked = await errors(root, {
     ...taskConfig,
-    taskDocuments: [{ identity: path, kind: 'proposal', path }],
+    documents: [{ identity: path, kind: 'proposal', path }],
   });
   expect(checked.some((error) => error.startsWith('TASK_DOCUMENT_INVALID'))).toBe(true);
 });
@@ -316,7 +321,7 @@ it.each([
 it('offers the real read-only documents CLI without a member directory or an automatic migration', async () => {
   const root = await taskFixture();
   const configPath = join(root, 'harness.config.json');
-  const raw = JSON.stringify({ ...taskConfig, configurationFiles: ['harness.config.json'] });
+  const raw = JSON.stringify({ ...config, configurationFiles: ['harness.config.json'] });
   await writeFile(configPath, raw);
   const result = spawnSync(
     process.execPath,
@@ -331,6 +336,16 @@ it('offers the real read-only documents CLI without a member directory or an aut
         identity: 'docs/old-prd.md',
         currentPath: 'docs/tasks/example/prd.md',
         aliases: ['docs/old-prd.md'],
+        registry: 'docs/tasks/example/documents.json',
+      },
+    ],
+    results: [
+      {
+        prd: 'docs/old-prd.md',
+        report: null,
+        records: null,
+        keys: [],
+        read: ['read-result', 'docs/old-prd.md'],
       },
     ],
     issues: [],
@@ -342,30 +357,24 @@ it('offers the real read-only documents CLI without a member directory or an aut
 it('registers shared pending proposals under their PRD and rejects orphan or misclassified designs', async () => {
   const proposal = 'docs/tasks/example/pending/choice.md';
   const root = await taskFixture({ [proposal]: '# Unadopted option\n' });
-  const registry: HarnessConfig = {
+  const registry: FixtureConfig = {
     ...taskConfig,
-    taskDocuments: [
-      ...taskConfig.taskDocuments!,
-      { identity: proposal, path: proposal, kind: 'proposal' },
-    ],
+    documents: [...taskConfig.documents!, { identity: proposal, path: proposal, kind: 'proposal' }],
   };
-  await writeFile(join(root, 'harness.config.json'), JSON.stringify(registry));
-  await writeFile(
-    join(root, 'docs/tasks/index.md'),
-    renderIndex({ version: 5, prds: [] }, registry.taskDocuments!),
-  );
+  await writeFile(join(root, 'harness.config.json'), JSON.stringify(config));
+  await writeFile(join(root, 'docs/tasks/index.md'), taskIndex);
   expect(await errors(root, registry)).toEqual([]);
-  registry.taskDocuments!.at(-1)!.kind = 'design';
+  registry.documents!.at(-1)!.kind = 'design';
   expect(
-    (await errors(root, registry)).some((error) => error.startsWith('TASK_DOCUMENT_OWNER')),
+    (await errors(root, registry)).some((error) => error.includes('TASK_DOCUMENT_OWNER')),
   ).toBe(true);
   const orphan = 'docs/tasks/orphan/design.md';
   await mkdir(dirname(join(root, orphan)), { recursive: true });
   await writeFile(join(root, orphan), '# Unowned design\n');
-  registry.taskDocuments!.at(-1)!.path = orphan;
-  registry.taskDocuments!.at(-1)!.identity = orphan;
+  registry.documents!.at(-1)!.path = orphan;
+  registry.documents!.at(-1)!.identity = orphan;
   expect(
-    (await errors(root, registry)).some((error) => error.startsWith('TASK_DOCUMENT_OWNER')),
+    (await errors(root, registry)).some((error) => error.includes('TASK_DOCUMENT_OWNER')),
   ).toBe(true);
 });
 
@@ -374,7 +383,57 @@ it('requires an independently named PRD directory with prd.md as its registered 
   const root = await taskFixture({ [wrong]: '# Invalid second PRD\n' });
   const checked = await errors(root, {
     ...taskConfig,
-    taskDocuments: [...taskConfig.taskDocuments!, { identity: wrong, path: wrong, kind: 'prd' }],
+    documents: [...taskConfig.documents!, { identity: wrong, path: wrong, kind: 'prd' }],
   });
   expect(checked.some((error) => error.startsWith('TASK_DOCUMENT_LOCATION'))).toBe(true);
+});
+
+it('validates local registry schemas, cross-PRD identity collisions and exact JSON classification', async () => {
+  const root = await taskFixture();
+  const registry = join(root, 'docs/tasks/example/documents.json');
+  for (const value of [
+    [],
+    { version: 2, documents: taskConfig.documents },
+    { version: 1, documents: [] },
+    { version: 1, documents: taskConfig.documents, unknown: true },
+  ]) {
+    await writeFile(registry, JSON.stringify(value));
+    expect((await inspectTaskDocuments(root, config)).errors.join()).toContain(
+      'TASK_DOCUMENT_SCHEMA',
+    );
+  }
+  await writeTaskDocuments(root, taskConfig.documents!, 'docs/tasks/example');
+  const other = 'docs/tasks/another/prd.md';
+  await mkdir(dirname(join(root, other)), { recursive: true });
+  await writeFile(join(root, other), '# Another PRD\n');
+  await writeTaskDocuments(
+    root,
+    [{ identity: 'docs/old-prd.md', kind: 'prd', path: other }],
+    'docs/tasks/another',
+  );
+  expect((await inspectTaskDocuments(root, config)).errors.join()).toContain(
+    'TASK_DOCUMENT_DUPLICATE',
+  );
+  await writeFile(join(root, 'docs/tasks/example/other.json'), '{}');
+  expect((await inventory(root, config)).errors).toContain(
+    "DOCUMENT_UNCLASSIFIED docs/tasks/example/other.json: declare the asset's purpose",
+  );
+  expect(
+    (await inventory(root, config)).errors.some((error) => error.includes('documents.json')),
+  ).toBe(false);
+});
+
+it('rejects symbolic registry files without weakening ordinary registry discovery', async () => {
+  const root = await taskFixture();
+  const registry = join(root, 'docs/tasks/example/documents.json');
+  const bytes = await readFile(registry, 'utf8');
+  await mkdir(join(root, '.work'), { recursive: true });
+  const outside = join(root, '.work/registry.json');
+  await writeFile(outside, bytes);
+  await rm(registry);
+  await symlink(outside, registry);
+  expect((await inspectTaskDocuments(root, config)).errors.join()).toContain('WORK_SYMLINK');
+  expect((await inventory(root, config)).errors).toContain(
+    'INVENTORY_SYMLINK docs/tasks/example/documents.json: classify a real file',
+  );
 });

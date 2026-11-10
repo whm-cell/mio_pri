@@ -7,25 +7,20 @@ import { normsIssues } from './norms-review.ts';
 import { documentCatalog, resolvePrd } from '../task-documents.ts';
 import {
   bookPaths,
-  indexPath,
   matchingEvidence,
   readBook,
   readDraft,
-  readIndex,
   renderBook,
   renderDraft,
-  renderIndex,
   validateLocations,
 } from './reports.ts';
 import type { ResultDraft } from './reports.ts';
 import { parseAcceptance, parseDetails, parseRecords } from './compact-store.ts';
-import { fields, optionalText, publicText, record } from './report-format.ts';
+import { fields, publicText, record } from './report-format.ts';
 
 export const markdown = (text: string) => format(text, { parser: 'markdown', printWidth: 100 });
 
-async function verified(root: string, task: Task, candidate?: string, publishing = false) {
-  if (publishing && (await optionalText(root, indexPath)) === null)
-    throw new Error(`WORK_DELIVERY_NAVIGATION: create ${indexPath} before publishing`);
+async function verified(root: string, task: Task, candidate?: string) {
   if (
     task.plan.result &&
     resolvePrd(task.plan.result.prd, await documentCatalog(root)) !== task.plan.result.prd
@@ -69,13 +64,8 @@ export async function deliver(root: string, id: string, rawRequest: string) {
       root,
       id,
       token,
-      async (restored, operation) => {
-        await verified(
-          root,
-          restored,
-          restored.checkpoint!.candidate,
-          operation.kind === 'complete' && !operation.done,
-        );
+      async (restored) => {
+        await verified(root, restored, restored.checkpoint!.candidate);
       },
       request.action === 'prepare',
     )
@@ -146,7 +136,7 @@ async function complete(
   const ref = task.delivery!.draft;
   if (!ref || request.draftSha256 !== ref.sha256)
     throw new Error('WORK_DELIVERY_STALE: prepare and review the current draft');
-  await verified(root, task, ref.candidate, true);
+  await verified(root, task, ref.candidate);
   const draft = await readDraft(root, task, ref.candidate);
   const acceptance = parseAcceptance(request.acceptance);
   if (acceptance.candidate !== draft.candidate)
@@ -154,8 +144,7 @@ async function complete(
   const catalog = await documentCatalog(root);
   await validateLocations(root, draft.result, catalog);
   const paths = bookPaths(draft.prd, catalog);
-  const { index, source: indexBefore } = await readIndex(root);
-  const { book, source: reportBefore, recordsSource } = await readBook(root, draft.prd, index);
+  const { book, source: reportBefore, recordsSource } = await readBook(root, draft.prd, catalog);
   const result = { ...draft.result, acceptance };
   book.results = book.results
     .filter((entry) => entry.key !== result.key)
@@ -164,19 +153,13 @@ async function complete(
   const bytes = publicText(await format(json(book), { parser: 'json', printWidth: 100 }));
   parseRecords(bytes);
   const source = publicText(await markdown(renderBook(book, paths.currentPath, bytes)));
-  index.prds = index.prds
-    .filter((entry) => entry.prd !== book.prd)
-    .concat({ prd: book.prd, report: { path: paths.report, sha256: digest(source) } })
-    .sort((a, b) => a.prd.localeCompare(b.prd));
   const outputs = {
     [paths.records]: bytes,
     [paths.report]: source,
-    [indexPath]: publicText(await markdown(renderIndex(index, catalog.documents))),
   };
   const expected = {
     [paths.records]: recordsSource,
     [paths.report]: reportBefore,
-    [indexPath]: indexBefore,
   };
   const accepted = {
     path: paths.report,

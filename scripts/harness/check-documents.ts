@@ -74,6 +74,11 @@ export async function checkDocuments(
       if (reached.has(file)) continue;
       reached.add(file);
       if (aliases.has(file)) continue;
+      // A reachable real task-directory link expands local registries, not historical prose.
+      if (file === 'docs/tasks') {
+        for (const entry of registry.documents) queue.push(entry.path);
+        for (const path of documents.keys()) if (resultDocument(path)) queue.push(path);
+      }
       for (const target of edges.get(file) ?? [])
         if (!reached.has(target) && (!resultDocument(file) || resultDocument(target)))
           queue.push(target);

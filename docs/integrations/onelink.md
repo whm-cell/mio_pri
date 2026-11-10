@@ -2,7 +2,7 @@
 
 ## 适用范围与接入事实
 
-实际消费者为[用户万联配置](../providers.md)、[目录客户端](../../src/integrations/onelink/models.ts)及 W2 [文本传输](../../src/integrations/onelink/chat.ts)/[DSH 适配](../../src/dsh/onelink.ts)。图片、视频、语音、音乐及素材执行器仍未装配；范围见[万联 PRD](../tasks/onelink-integration/prd.md)。协议依据为[模型目录文档](https://docs.onelinkai.cloud/8882392m0)与[文本接入说明](https://docs.onelinkai.cloud/8882612m0)，旧源码身份仅在[测试参考](../../tests/fixtures/onelink-legacy-snapshot.ts)保存，不参与生产或构建。
+实际消费者为[用户万联配置](../providers.md)、[目录客户端](../../src/integrations/onelink/models.ts)及[文本传输](../../src/integrations/onelink/chat.ts)/[DSH 适配](../../src/dsh/onelink.ts)。图片、视频、语音、音乐及素材执行器仍未装配；范围见[万联 PRD](../tasks/onelink-integration/prd.md)。协议依据为[模型目录文档](https://docs.onelinkai.cloud/8882392m0)与[文本接入说明](https://docs.onelinkai.cloud/8882612m0)，旧源码身份仅在[测试参考](../../tests/fixtures/onelink-legacy-snapshot.ts)保存，不参与生产或构建。
 
 ## 必须遵守的约束
 
@@ -14,9 +14,9 @@
 
 ## 使用经验与适用条件
 
-W2 聊天只允许固定 origin 的 POST `/v1/chat/completions` 与 `/v1/messages`；后者兼容固定 Anthropic SDK 精确的 `?beta=true` 查询，不放行其他路径/查询。两协议统一 Bearer，SDK x-api-key 被移除，无 ambient/native credential 回退。重定向为 error；SDK及Mio自动 retry 均为0，Anthropic strict-tool 自动降级重发也关闭。鉴权、端点、并发快照不通过共享环境变量切换。正常响应保留公开 PiAi 编码语义；非2xx错误体在进入SDK前替换为固定诊断，观察只取白名单status/requestId/usage/finish/failureCode，不透传原响应/异常。已知HTTP 401/403、402、408/504、429分别映射鉴权、额度不足、超时、限流，其他失败不猜测额度或可用性。取消/超时和观察持久化失败不推断未扣费。
+聊天只允许固定 origin 的 POST `/v1/chat/completions` 与 `/v1/messages`；后者兼容固定 Anthropic SDK 精确的 `?beta=true` 查询，不放行其他路径/查询。两协议统一 Bearer，SDK x-api-key 被移除，无 ambient/native credential 回退。重定向为 error；SDK及Mio自动 retry 均为0，Anthropic strict-tool 自动降级重发也关闭。鉴权、端点、并发快照不通过共享环境变量切换。正常响应保留公开 PiAi 编码语义；非2xx错误体在进入SDK前替换为固定诊断，观察只取白名单status/requestId/usage/finish/failureCode，不透传原响应/异常。已知HTTP 401/403、402、408/504、429分别映射鉴权、额度不足、超时、限流，其他失败不猜测额度或可用性。取消/超时和观察持久化失败不推断未扣费。
 
-Mio 输出上限1024、30秒HTTP/idle是本地政策，未知 supplier context/最大输出不从 SDK 默认大容量推导。普通check使用协议替身；独立 conversations-live 经正式用户入口执行真实文本，失败记录实际白名单观察。本期W2真实文本验收使用当前目录精确DeepSeek；Claude/Messages进一步适配及真实验收为后续项，不阻塞本期。保留两协议实现和确定性回归；DeepSeek通过不证明Claude，未发现或无对应成功观察的目标仍未验证。
+Mio 输出上限1024、30秒HTTP/idle是本地政策，未知 supplier context/最大输出不从 SDK 默认大容量推导。普通 check 使用协议替身；独立 conversations-live 经正式用户入口执行真实文本，失败记录实际白名单观察。各协议保留确定性回归，真实验证目标与开发安排沿[万联 PRD](../tasks/onelink-integration/prd.md)，实际接受范围与限制见其[成果入口](../tasks/onelink-integration/complete/report.md)。一个目标通过不证明其他目标，未发现或无对应成功观察的目标仍未验证。
 
 旧地址归一化允许其他 host 原样通过，不能作为允许列表复用；旧 TLS 补链、回退和重试没有作为当前必需能力搬入。旧预设及其冲突仅是迁移参考。其余非文本协议路径、错误和生成重试在后续真实消费者出现时另行采纳，不从目录成功推导 Messages、图片、MiniMax 或素材线路可用。
 

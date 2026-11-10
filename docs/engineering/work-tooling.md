@@ -16,15 +16,15 @@ status 仅生成分页目录；context、ensure、update 的返回与 check 使�
 
 guide 默认返回当前动作的章节入口，显式选择后按 Markdown AST 的真实标题边界读取；代码围栏中的示例标题不算导航。read 展开选中的记录、核验或已登记证据；read-result 按 PRD/key 读取公共成果、版本或证据，无需作者记录。分页受输出预算和内容摘要约束，续页遇到内容变化明确拒绝。完整性检查在进程内读取相关字节，与送入模型的正文分开；显式子命令和宿主直接读文件不受这套展示边界强制限制。
 
-`harness.config.json.taskDocuments` 是需求资料的唯一身份注册，类别为 prd/design/proposal。共享 resolver 用于 ensure/update、capture、交付与文档检查；当前目标、必要 alias 与配置进入候选。活动资料由任务总索引导航可达，不能借历史正文取得发现资格。重复身份、未知页、私有/越界/符号链接和孤儿公开产物明确拒绝。
+各 PRD 的 `documents.json` 是其需求资料的唯一身份注册，类别为 prd/design/proposal；中央配置不保存任务条目。共享 resolver 用于 ensure/update、capture、交付与文档检查，发现全部登记并核对跨登记唯一性、资料归属与合法路径。候选绑定固定公共规则、真实工程配置、实际声明的资料与相关登记文件；未读取的同 PRD 正文和合法无关 PRD 不成为隐式输入，显式广 scope 仍展开全部命中文件。活动资料通过静态任务入口的真实目录链接或显式正文链接可达，不能借历史正文取得发现资格。重复身份、未知页、私有/越界/符号链接和孤儿公开产物明确拒绝；JSON 仅精确分类登记和成果记录文件。
 
 ## 每份 PRD 的公共包
 
 可验收开发能力才设置 `plan.result={prd,key}`；维护在个人记录中核对和归档。公共 v5 包位于注册 PRD 当前目录的 `complete/`，稳定身份与物理路径分别核对，不从旧身份字符串拼接输出位置。目录规则见[资料归属](../index.md#增长与归属)。
 
-`records.json` 顶层是 version、prd、results；每项包含 key、title、outcomes、locations（path/purpose）、verification、limitations、acceptance（candidate/statement/reference）。接受标识不附带可恢复代码或证据；完整 checkpoint 和必需原件仍在开发流程核验。`report.md` 仅导航成果与入口。记录、报告和总索引校验一致性，入口检查实际公共文件，公共检查不依赖作者 `.work`。
+`records.json` 顶层是 version、prd、results；每项包含 key、title、outcomes、locations（path/purpose）、verification、limitations、acceptance（candidate/statement/reference）。接受标识不附带可恢复代码或证据；完整 checkpoint 和必需原件仍在开发流程核验。`report.md` 仅导航成果与入口，并用原 v5 元数据绑定记录路径和内容哈希。read-result、receive 与公共检查直接沿注册 PRD 定位配对文件，核对身份、内容、单边缺件和孤儿，不消费全局成果索引或作者 `.work`。配对文件均不存在只表示当前无可发现成果，不能证明从未交付；按 key 读取、显式成果输入或已有报告引用仍须真实存在，历史删除事实须结合 Git 或既有接受来源核对。
 
-只支持公共 v5，旧公共格式、历史恢复和逐证据 selector 已退出。`records.json#result=<key>` 绑定单项记录；广泛 scope 展开兄弟成果，仅排除自身结果与生成导航，不复制开发清单到公共输出。新增无关 key 不改变指定成果的内容候选；inputStamp 仍观察物理文件/目录，运行中的共包写入会保守地使验证无效。
+只支持公共 v5，旧公共格式、历史恢复和逐证据 selector 已退出。`records.json#result=<key>` 绑定单项记录与所属登记；广泛 scope 展开兄弟成果，仅排除自身结果和所属生成导航，不复制开发清单到公共输出。新增无关 key 不改变指定成果的内容候选；inputStamp 仍观察物理文件及祖先目录，恢复后字节相同也可能使验证无效。独立 checkout/worktree 提供任务隔离；同一 checkout 的并发验收不在保证范围，不弱化恢复改写检测。
 
 ## 写入、恢复与保留
 
@@ -38,9 +38,9 @@ WORK_CONFLICT 的回执在同一独占区记录，合法对账先保存、后清
 
 自动验收按声明命令和已有原件的 argv 聚合完整检查与后续补测，不另存覆盖状态；声明、失败恢复与旧记录补缺统一见[记录证据](../work-records.md#记录证据)。精确命令匹配不证明语义覆盖，声明遗漏的实际输入也不会自动进入候选。
 
-prepare 校验当前候选全部必需原件，只生成私有 v5 草稿；草稿保存成果说明与原件元数据引用，不复制公开附件。complete 再核对原件、草稿和针对候选的真实接受，更新指定 key 及索引并保留兄弟成果。同 key 新候选需重新验证与接受，本阶段不要求旧结果先提交或保留恢复包。
+prepare 校验当前候选全部必需原件，只生成私有 v5 草稿；草稿保存成果说明与原件元数据引用，不复制公开附件。complete 再核对原件、草稿和针对候选的真实接受，仅写所属 PRD 的 records/report 并保留兄弟成果。不同 PRD 没有共享公共交付写入；同 PRD 仍须单写入者。同 key 新候选需重新验证与接受，本阶段不要求旧结果先提交或保留恢复包。
 
-新交付 journal 为 v2，保存请求与目标 before/after 字节，用于本次写入的中断重放和冲突检测，不是长期公共证据。逐文件原子替换不是跨文件事务；未完成新操作阻止其他记录写入，旧请求不得覆盖后续合法更新。旧 v1 journal 永不重放，明确提示重新 prepare；只有显式新 prepare 才可替换它。旧个人状态继续可查看，旧草稿无效，不批量迁移个人文件。
+新交付 journal 为 v2，保存请求与目标 before/after 字节，用于本次写入的中断重放和冲突检测，不是长期公共证据。逐文件原子替换不是跨文件事务；未完成新操作阻止其他记录写入，旧请求不得覆盖后续合法更新。旧 v1 或已完成且含全局索引目标的 v2 journal 作为历史保留，永不重放，只有显式新 prepare 可替换。未完成且含旧索引目标的 journal 在新工具中明确拒绝，须在独立 checkout 使用原工具版本核对原请求和输出，不能删除 journal 或让它覆写静态入口。旧个人状态继续可查看，旧草稿不能自动成为新候选通过，不批量迁移个人文件。
 
 公共 receive 仅创建目标、成果引用和入口提示，不能比较历史文件或复原原件；授权、范围、验收项、checkpoint 和通过证据均需重建。个人精确代码 handoff 仍要求文件匹配，且不继承授权或通过。
 

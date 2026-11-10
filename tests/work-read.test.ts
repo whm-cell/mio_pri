@@ -1,3 +1,4 @@
+import { writeTaskDocuments } from './task-documents-fixture.ts';
 import { spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -34,7 +35,6 @@ async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'mio-work-read-')));
   scratch.push(root);
   const config = JSON.parse(await readFile(join(project, 'harness.config.json'), 'utf8'));
-  delete config.taskDocuments;
   const files = {
     'harness.config.json': json(config),
     'package.json': '{"type":"module"}\n',
@@ -325,9 +325,7 @@ it('keeps the result declaration visible when the whole task view exceeds its bu
   const prd = 'docs/tasks/probe/prd.md';
   await mkdir(join(root, 'docs/tasks/probe'), { recursive: true });
   await writeFile(join(root, prd), '# Probe PRD\n');
-  const config = JSON.parse(await readFile(join(root, 'harness.config.json'), 'utf8'));
-  config.taskDocuments = [{ kind: 'prd', identity: prd, path: prd }];
-  await writeFile(join(root, 'harness.config.json'), json(config));
+  await writeTaskDocuments(root, [{ kind: 'prd', identity: prd, path: prd }]);
   const detail = '明确的夹具说明'.repeat(80);
   task.plan.nonGoals = Array.from({ length: 5 }, () => detail);
   task.plan.decisions = Array.from({ length: 5 }, () => ({

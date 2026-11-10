@@ -23,7 +23,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
   const scan = await inventory(root, config);
   if (scan.errors.length) throw new Error(scan.errors.join('\n'));
   const catalog = await documentCatalog(root, config);
-  const selected = new Set<string>();
+  const selected = new Set<string>(['harness.config.json']);
   for (const [kind, paths] of [
     [
       'source',
@@ -45,8 +45,10 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
         if (kind !== 'input') throw new Error('WORK_REPORT_SELECTOR: use selectors only in inputs');
         if (deliveryOutput(task, reference, catalog))
           throw new Error('WORK_DELIVERY_INPUT: own result cannot be an input');
-        await readResultInput(root, reference);
+        await readResultInput(root, reference, catalog);
         selected.add(reference);
+        for (const entry of catalog.documents)
+          if (beneath(selector.path, dirname(entry.registry))) selected.add(entry.registry);
         continue;
       }
       const path = kind === 'source' ? resolveDocument(reference, catalog).currentPath : reference;
@@ -67,17 +69,18 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       });
       for (const entry of catalog.documents) {
         const references = [entry.identity, entry.path, ...(entry.aliases ?? [])];
-        if (!references.some((file) => path === '.' || beneath(file, path))) continue;
-        [entry.path, ...(entry.aliases ?? [])].forEach((file) => selected.add(file));
-        selected.add('harness.config.json');
+        const readsDocument = references.some((file) => path === '.' || beneath(file, path));
+        if (readsDocument)
+          [entry.path, ...(entry.aliases ?? [])].forEach((file) => selected.add(file));
+        if (readsDocument || beneath(path, dirname(entry.registry))) selected.add(entry.registry);
       }
     }
   }
   const files: Record<string, string> = {};
   for (const file of [...selected].sort()) {
-    if (recordsFile(file)) Object.assign(files, await compactInputs(root, file, task));
+    if (recordsFile(file)) Object.assign(files, await compactInputs(root, file, task, catalog));
     else if (hasResultSelector(file)) {
-      const content = await readResultInput(root, file);
+      const content = await readResultInput(root, file, catalog);
       if (content === null) throw new Error(`WORK_INPUT_MISSING: ${file}`);
       files[file] = digest(content);
     } else files[file] = digest(await readFile(await checkedPath(root, file)));

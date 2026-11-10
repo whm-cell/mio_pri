@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { checkedPath, digest, json, parseTask, loadTask } from './records.ts';
 import type { Task } from './records.ts';
 import { capture } from './context.ts';
-import { bookPaths, indexPath, optionalText } from './reports.ts';
+import { bookPaths, optionalText } from './reports.ts';
 import { documentCatalog } from '../task-documents.ts';
 
 interface Change {
@@ -38,6 +38,12 @@ export async function loadOperation(root: string, id: string) {
     typeof op.done !== 'boolean'
   )
     throw new Error('WORK_DELIVERY_OPERATION: invalid journal');
+  if (op.changes.some((change) => change.path === 'docs/tasks/index.md')) {
+    if (op.done) return { operation: null, raw };
+    throw new Error(
+      'WORK_DELIVERY_OBSOLETE: unfinished global-index journal retained; reconcile its outputs using the original tool version in an isolated checkout before a fresh prepare; it cannot replay here',
+    );
+  }
   const state = op.changes.at(-1);
   if (state?.path !== `.work/tasks/${id}/state.json` || !state.after)
     throw new Error('WORK_DELIVERY_OPERATION: state must be last');
@@ -46,7 +52,6 @@ export async function loadOperation(root: string, id: string) {
   const target = task.plan.result;
   const targets = target ? bookPaths(target.prd, await documentCatalog(root)) : null;
   const allowed = (path: string) =>
-    path === indexPath ||
     path === `.work/tasks/${id}/state.json` ||
     (task.delivery?.version === 2 &&
       targets &&

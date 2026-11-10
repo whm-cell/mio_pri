@@ -1,3 +1,4 @@
+import { taskIndex, taskIndexPath } from './task-documents-fixture.ts';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,14 +7,8 @@ import { afterEach, expect, it } from 'vitest';
 import { documentCatalog } from '../scripts/harness/task-documents.ts';
 import { outputBytes } from '../scripts/harness/work/output.ts';
 import { readPublicResult } from '../scripts/harness/work/public-read.ts';
-import { digest, json } from '../scripts/harness/work/records.ts';
-import {
-  bookPaths,
-  readBook,
-  readIndex,
-  renderBook,
-  renderIndex,
-} from '../scripts/harness/work/reports.ts';
+import { json } from '../scripts/harness/work/records.ts';
+import { bookPaths, readBook, renderBook } from '../scripts/harness/work/reports.ts';
 
 const project = resolve('.');
 const scratch: string[] = [];
@@ -25,9 +20,8 @@ async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'mio-public-read-')));
   scratch.push(root);
   const catalog = await documentCatalog(project);
-  const { index } = await readIndex(project);
-  const prd = index.prds[0]!.prd;
-  const book = structuredClone((await readBook(project, prd, index)).book);
+  const prd = catalog.documents.find((entry) => entry.kind === 'prd')!.identity;
+  const book = structuredClone((await readBook(project, prd, catalog)).book);
   const paths = bookPaths(prd, catalog);
   book.results[0]!.verification = 'Synthetic pagination observation. '.repeat(200);
   const files: Record<string, string> = {
@@ -39,13 +33,9 @@ async function fixture() {
   for (const entry of catalog.documents)
     for (const path of new Set([entry.path, ...(entry.aliases ?? [])]))
       files[path] = await readFile(join(project, path), 'utf8');
-  files['docs/tasks/index.md'] = renderIndex(
-    {
-      version: 5,
-      prds: [{ prd, report: { path: paths.report, sha256: digest(files[paths.report]!) } }],
-    },
-    catalog.documents,
-  );
+  files[taskIndexPath] = taskIndex;
+  for (const registry of catalog.registries)
+    files[registry] = await readFile(join(project, registry), 'utf8');
   for (const [path, bytes] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), bytes);

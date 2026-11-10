@@ -1,3 +1,5 @@
+import type { TaskDocument } from '../scripts/harness/inventory.ts';
+import { writeTaskDocuments } from './task-documents-fixture.ts';
 import { spawn, spawnSync } from 'node:child_process';
 import {
   cp,
@@ -72,11 +74,6 @@ async function fixture(actor = 'alice') {
   const root = await mkdtemp(join(tmpdir(), 'mio-work-'));
   scratch.push(root);
   await cp(join(project, 'harness.config.json'), join(root, 'harness.config.json'));
-  // This fixture models a repository without this project's task-document registry.
-  const configPath = join(root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
-  delete config.taskDocuments;
-  await writeFile(configPath, JSON.stringify(config));
   for (const [file, source] of Object.entries({
     'package.json': '{"type":"module"}\n',
     '.gitignore': '.work/\n',
@@ -2002,8 +1999,6 @@ it('rejects corrupt/unknown-version records and damaged handoff data without rep
 
 it('uses the same CLI identity before and after a source move and binds the current document, aliases and registry', async () => {
   const root = await fixture();
-  const configPath = join(root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
   const originalPath = 'docs/tasks/original/prd.md';
   await mkdir(dirname(join(root, originalPath)), { recursive: true });
   await writeFile(join(root, originalPath), '# API\n');
@@ -2011,7 +2006,7 @@ it('uses the same CLI identity before and after a source move and binds the curr
     join(root, requirement.source),
     '# 资料已迁移\n\n[当前资料](tasks/original/prd.md)\n',
   );
-  config.taskDocuments = [
+  let documents: TaskDocument[] = [
     {
       identity: requirement.source,
       kind: 'prd',
@@ -2019,7 +2014,7 @@ it('uses the same CLI identity before and after a source move and binds the curr
       aliases: [requirement.source],
     },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(root, documents);
   const request = {
     ...proposal(),
     plan: { ...proposal().plan, result: { prd: requirement.source, key: 'value' } },
@@ -2035,7 +2030,7 @@ it('uses the same CLI identity before and after a source move and binds the curr
     '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
   );
   await rm(join(root, originalPath));
-  config.taskDocuments = [
+  documents = [
     {
       identity: requirement.source,
       kind: 'prd',
@@ -2043,7 +2038,7 @@ it('uses the same CLI identity before and after a source move and binds the curr
       aliases: [requirement.source],
     },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(root, documents);
   const moved = invoke(root, ['ensure', '--stdin'], {
     ...request,
     requirement: { ...requirement, source: 'docs/tasks/example/prd.md' },
@@ -2082,8 +2077,6 @@ it('uses the same CLI identity before and after a source move and binds the curr
 
 it('resumes the same task after retiring its identity redirect and binds only current physical sources', async () => {
   const root = await fixture();
-  const configPath = join(root, 'harness.config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf8'));
   const path = 'docs/tasks/example/prd.md';
   await mkdir(dirname(join(root, path)), { recursive: true });
   await writeFile(join(root, path), '# API\n');
@@ -2091,10 +2084,10 @@ it('resumes the same task after retiring its identity redirect and binds only cu
     join(root, requirement.source),
     '# 资料已迁移\n\n[当前资料](tasks/example/prd.md)\n',
   );
-  config.taskDocuments = [
+  const documents: TaskDocument[] = [
     { identity: requirement.source, kind: 'prd', path, aliases: [requirement.source] },
   ];
-  await writeFile(configPath, JSON.stringify(config));
+  await writeTaskDocuments(root, documents);
   const request = {
     ...proposal(),
     plan: { ...proposal().plan, result: { prd: requirement.source, key: 'value' } },
@@ -2104,8 +2097,8 @@ it('resumes the same task after retiring its identity redirect and binds only cu
   expect(run(root, 'console.log("before redirect retirement")', id).status).toBe(0);
   const before = await readFile(statePath(root, id), 'utf8');
   await rm(join(root, requirement.source));
-  config.taskDocuments[0].aliases = [];
-  await writeFile(configPath, JSON.stringify(config));
+  documents[0]!.aliases = [];
+  await writeTaskDocuments(root, documents);
   const resumed = invoke(root, ['ensure', '--stdin'], {
     ...request,
     requirement: { ...requirement, source: path },
@@ -2145,9 +2138,7 @@ it('retrieves classified tasks artifacts and receives an exact-code handoff from
       join(root, 'docs/api.md'),
       '# 资料已迁移\n\n[当前资料](../docs/tasks/example/prd.md)\n',
     );
-    const path = join(root, 'harness.config.json');
-    const config = JSON.parse(await readFile(path, 'utf8'));
-    config.taskDocuments = [
+    const documents: TaskDocument[] = [
       {
         identity: requirement.source,
         kind: 'prd',
@@ -2156,7 +2147,7 @@ it('retrieves classified tasks artifacts and receives an exact-code handoff from
       },
       { identity: shared, kind: 'proposal', path: shared },
     ];
-    await writeFile(path, JSON.stringify(config));
+    await writeTaskDocuments(root, documents);
   }
   const first = invoke(sender, ['ensure', '--stdin'], proposal());
   expect(first.status, first.output).toBe(0);

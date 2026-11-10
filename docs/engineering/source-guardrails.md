@@ -12,7 +12,7 @@ Redis 驱动包的生产导入只允许 `src/integrations/redis.ts`；开发工�
 
 已登记的 TS 文件还必须进入类型检查配置；生产 TS 必须同时进入构建配置。新增根目录仅登记归属不足以通过，检查器会对账编译器实际匹配的文件集合。
 
-W2 将精确的 `@earendil-works/pi-ai`（含 `/models`、`/api/*` 公开子路径）纳入同一 DSH 适配边界，按导入名、解析 packageId 与真实包归属识别，不放宽其他 npm 包。conversations/providers 不能反向导入本地 src/dsh。合法适配、临近非法目录、普通业务、type-only 别名及本地越界在同一 guardrail fixture 验证。
+精确的 `@earendil-works/pi-ai`（含 `/models`、`/api/*` 公开子路径）属于同一 DSH 适配边界，按导入名、解析 packageId 与真实包归属识别，不放宽其他 npm 包。conversations/providers 不能反向导入本地 src/dsh。合法适配、临近非法目录、普通业务、type-only 别名及本地越界在同一 guardrail fixture 验证。
 
 体量统计来自 TypeScript AST：物理行数（含注释/空行）、函数声明跨度、语法块嵌套深度、if/循环/case/catch/条件表达式节点数。`decisionNodes` 是文件级分支信号，不是完整圈复杂度或算法复杂度；职责聚合、时间/空间成本由相关变更审阅。配置/文档/生成文件不计入业务源码指标。依赖声明采用 `skipLibCheck`，严格类型检查覆盖本项目；第三方声明内部仍由依赖兼容与装载测试补充。
 

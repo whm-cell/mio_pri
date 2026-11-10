@@ -2,7 +2,7 @@
 
 资料按[用途导航](docs/index.md)逐步展开，只登记实际遵循的子文档；新增资料链接回权威入口，不按需求完成搬迁现行契约或既有 PRD。
 
-`docs/` 汇总公共资料；现行规范按职责维护，需求、专属设计与未采纳候选统一从[任务资料与成果](docs/tasks/index.md)进入 `docs/tasks/`。位置与稳定身份只在 `harness.config.json` 的 `taskDocuments` 注册，迁移前后用 `pnpm work documents` 只读核对；个人旧记录不批量改写，公共整理保持接受事实而非旧存储格式。
+`docs/` 汇总公共资料；现行规范按职责维护，需求、专属设计与未采纳候选统一从[任务资料与成果](docs/tasks/index.md)进入 `docs/tasks/`。位置与稳定身份在各 PRD 目录的 `documents.json` 注册，迁移前后用 `pnpm work documents` 只读核对资料与成果入口；总入口保持静态，交付只更新所属 PRD 的成果文件。个人旧记录不批量改写，公共整理保持接受事实而非旧存储格式。
 
 当前交付范围是 TypeScript 插件服务基础护栏。需求、已采用规则、模块边界与待定项见 [底座规格](docs/foundation.md)，对外契约见 [API 约定](docs/api.md)，启动和检查见 [README](README.md)。
 

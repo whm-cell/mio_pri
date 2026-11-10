@@ -64,9 +64,9 @@ plan 的目标、范围、授权和验收来自真实任务。scope 是允许写
 
 ## 核对与同步
 
-`pnpm work documents` 无需个人记录，只读列出 `harness.config.json.taskDocuments` 的 kind、identity、currentPath、aliases 与校验问题。每项声明 prd/design/proposal；稳定 identity 可沿用原公共路径，不要求同名实体文件，实际正文由 path 定位；同名实体若存在，只能是 current path 或已声明且通过校验的 alias，不能遮蔽另一份普通规范。只有需要兼容旧 Markdown 链接时才保留并声明短导航 alias；移除前核对引用，已声明 alias 和当前正文仍必须存在。新请求的 requirement.source 和 result.prd 归一到 identity，来源读取解析到当前正文，稳定标识与当前路径因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。候选只摘要实际正文、仍声明的 alias 和配置，移除 alias、迁移或目标正文变化须审阅、sync 并重新核对受影响证据。普通文件输入和 Markdown 链接不因注册 identity 就允许悬空。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
+`pnpm work documents` 无需个人记录，只读发现各 PRD 的 `documents.json`，有界列出 kind、identity、currentPath、aliases、registry、成果入口与校验问题；使用 `--select /documents` 或 `/results` 按需分页。登记格式与归属见[资料导航](index.md#增长与归属)。稳定 identity 可沿用原公共路径，不要求同名实体文件，实际正文由 path 定位；同名实体若存在，只能是 current path 或已声明且通过校验的 alias，不能遮蔽另一份普通规范。只有需要兼容旧 Markdown 链接时才保留并声明短导航 alias；移除前核对引用，已声明 alias 和当前正文仍必须存在。新请求的 requirement.source 和 result.prd 归一到 identity，来源读取解析到当前正文，稳定标识与当前路径因而找到同一任务与 book；旧 parse/load、accepted metadata 与历史 version.files 不归一、不重写。移除 alias、迁移或实际输入变化须审阅、sync 并重新核对受影响证据。普通文件输入和 Markdown 链接不因注册 identity 就允许悬空。未知活动任务页、重复身份/路径/别名、越界/私有/符号链接及不可发现资料拒绝；公开成果仍由报告孤儿检查保护。此命令不自动迁移文件或更新接受。
 
-注册的活动资料按 PRD 稳定名称归属 `docs/tasks/<名称>/`；总索引直接导航需求、设计与候选。prd 必须是同目录 prd.md，design/proposal 归属该 PRD，pending 仅存注册 proposal。成果位于同目录 complete，另作完整性与孤儿检查。新交付及未完成的新格式重放要求真实任务总索引存在，不自动创建第二份导航。
+注册的活动资料按 PRD 稳定名称归属 `docs/tasks/<名称>/`，每个目录恰有一个 PRD；静态总入口通过真实任务目录展开登记导航，入口断链仍拒绝。prd 必须是同目录 prd.md，design/proposal 归属该 PRD，pending 仅存注册 proposal。成果位于同目录 complete，按登记 PRD 独立发现并校验 records/report 配对、内容哈希、身份、缺件与孤儿，不依赖总入口内的动态成果元数据。
 
 ```sh
 pnpm work context api-probe resume
@@ -114,7 +114,7 @@ check 只读；退出码按完整现场核验决定，缺失契约、依赖未�
 
 sync 更新检查点，保留历史证据；执行后刷新阶段后继，即使本次核对没有内容变化，也不能保留已经完成的同步动作，不代替业务规划。字节、任务契约、分支／HEAD 变化先审阅再同步；新候选撤回旧释放，旧证据不自动重绑。内容相同的提交／分支变化，经核对仍可复用同内容证据。
 
-文件摘要覆盖固定公共策略文件和任务声明的范围／输入；这是本机完整性读取，不是向模型注入正文。sources 不默认塞入全部操作手册，旧来源继续兼容。新公共包的精确输入可写为 `docs/tasks/<名称>/complete/records.json#result=<key>`，只绑定该成果的简洁记录；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。运行期间对同一物理包的写入仍会触发 inputStamp 的保守变更检测。
+文件摘要覆盖固定公共策略、真正工程配置、任务实际声明的范围／输入，以及相关 PRD 登记和必要 alias；合法无关 PRD 的新增或正文变化不成为窄范围任务的隐式输入。同 PRD 未读取的设计／提案正文也不自动进入候选，登记变化仍会被检测；显式广 scope 按原范围展开。全量登记有效性校验继续执行。这是本机完整性读取，不是向模型注入正文；sources 不默认塞入全部操作手册。新公共包的精确输入可写为 `docs/tasks/<名称>/complete/records.json#result=<key>`，绑定该成果的简洁记录与所属登记；追加无关 key 不改变此内容候选。selector 严格解析为公共记录包与成果身份，实际文件仍受路径、符号链接和完整性校验；普通缺失输入照常拒绝。inputStamp 保留物理文件及祖先目录的改写检测，同一 checkout 的并发写入可能保守地使运行验收无效；隔离保证以独立 checkout/worktree 为边界。
 
 ## 实施命令
 
@@ -254,7 +254,7 @@ requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 
 
 v2 私有交付契约与公共 v5 格式含义不同。旧个人状态继续可查看；旧交付草稿和 v1 journal 不再发布或重放。显式新 prepare 校验当前契约后可替换旧 journal，新 journal 未结束时仍阻止其他记录写入。个人文件不批量迁移。
 
-输出排除仅限总索引、本 PRD 报告导航和当前成果键。其他成果、代码与规范仍按真实范围参与候选，不忽略整个 complete 目录。
+输出排除仅限本 PRD 报告导航和当前成果键。静态总入口及其他成果、代码与规范仍按真实声明范围参与候选，不忽略整个 complete 目录。
 
 全部验收项通过后，由 Agent 准备草稿：
 
@@ -291,7 +291,7 @@ prepare 沿[记录证据](#记录证据)核验每个验收 ID 的当前有效原
 
 complete 再核对必需原件、候选、草稿和接受绑定，从注册 PRD 当前路径确定同目录 complete。v5 records.json 保存 key、title、outcomes、locations、verification、limitations、acceptance；report.md 只生成导航。没有文件清单、详细证据或可恢复源码，候选标识仅关联接受事实。
 
-同 key 更新只替换本项，保留兄弟结果，不要求旧结果先提交。统一索引也列出尚无成果的注册需求；成果数量不表示整份 PRD 完成。旧公共格式直接拒绝，不提供历史恢复。
+同 key 更新只替换本项，保留兄弟结果，不要求旧结果先提交；公共写入仅限所属 PRD 的 records/report。静态入口与 `work documents` 也可找到尚无成果的注册需求，成果数量不表示整份 PRD 完成。旧公共格式直接拒绝，不提供历史恢复；含旧全局索引目标的 journal 处理沿[工具恢复边界](engineering/work-tooling.md#写入恢复与保留)，不批量改旧个人记录。
 
 新流程中断可原样重试请求，v2 journal 恢复本次写入；外部改动、陈旧输入和错误归属拒绝覆盖。未结束新操作阻止其他记录写入，已完成请求不重写被人修改的字节。旧 v1 journal 不重放，需显式重新 prepare；重新准备仍要求当前 revision、契约和原件。reopen 只更新个人状态，公共完整性不因输出排除而免检。
 
@@ -345,6 +345,6 @@ pnpm work archive api-probe "完成、取消或暂缓的实际原因与未完成
 
 候选绑定所选字节和契约；成员、绝对工作区、HEAD 不进入内容候选，单纯提交相同内容不使证据失效。下一步、阻塞、共享导航、阶段标签不改变候选；需求关联、result 归属、目标、范围、来源、授权、验收和决策改变会改变候选。未显式升级的旧记录保持原候选算法。revision 是整份当前记录字节摘要，和候选用途不同：进度或 notes 更新也会改变 revision。
 
-可选 delivery 保存格式版本、私有草稿和最后接受引用。v2 accepted 的 path 指向 PRD 汇总，key 指向成果，sha256 是该成果规范 JSON 摘要，candidate 是其受验候选；兄弟成果变化不改这个绑定。公共索引的 sha256 则核对整份汇总文件，两者用途不同。它不是通用输出排除开关。
+可选 delivery 保存格式版本、私有草稿和最后接受引用。v2 accepted 的 path 指向 PRD 汇总，key 指向成果，sha256 是该成果规范 JSON 摘要，candidate 是其受验候选；兄弟成果变化不改这个绑定。公开 report 中的 sha256 核对所属 records 文件内容，两者用途不同。它不是通用输出排除开关。
 
 公共协议、源码、测试、PRD 已接受成果摘要入库；护栏维护与演练不计 PRD 进度。member.json、tasks/<task>/state.json、原件、待接受草稿、handoff 和 inbox 位于忽略的 `.work`。公共 CI 不读取成员内容，也不替代本地 work check；公开摘要不能冒充完整私人原日志。备份和传输沿真实项目选择，缺少原件时不能推断已恢复。

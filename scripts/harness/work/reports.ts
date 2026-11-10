@@ -2,7 +2,6 @@ import { stat } from 'node:fs/promises';
 import { dirname, relative } from 'node:path';
 import { format } from 'prettier';
 import { beneath } from '../inventory.ts';
-import type { TaskDocument } from '../inventory.ts';
 import { documentCatalog, resolvePrd, resolveDocument, resultDocument } from '../task-documents.ts';
 import { checkedPath, digest, json } from './records.ts';
 import type { Evidence, Task } from './records.ts';
@@ -22,12 +21,7 @@ import { automatedEvidence } from './evidence.ts';
 export { hashField, metadata, optionalText, record, textField } from './report-format.ts';
 export type { PublicResult, ResultBook } from './compact-store.ts';
 export { reportPath } from './compact-store.ts';
-export const indexPath = 'docs/tasks/index.md';
 type Catalog = Awaited<ReturnType<typeof documentCatalog>>;
-export interface TaskIndex {
-  version: 5;
-  prds: { prd: string; report: { path: string; sha256: string } }[];
-}
 export interface ResultDraft {
   version: 5;
   prd: string;
@@ -56,7 +50,7 @@ export function deliveryOutput(task: Task, path: string, catalog: Catalog) {
     const selector = parseSelector(path);
     return selector.path === paths.records && selector.key === target.key;
   }
-  return path === indexPath || path === paths.report;
+  return path === paths.report;
 }
 
 async function sameMarkdown(actual: string, expected: string) {
@@ -79,54 +73,19 @@ export async function validateLocations(root: string, result: ResultDetails, cat
   }
 }
 
-export function parseIndex(source: string): TaskIndex {
-  const index = record(metadata(source, 'mio-prd-index'));
-  fields(index, ['version', 'prds']);
-  if (index.version !== 5 || !Array.isArray(index.prds))
-    throw new Error('WORK_REPORT_FORMAT: only public v5 index is supported');
-  const seen = new Set<string>();
-  for (const value of index.prds) {
-    const entry = record(value);
-    fields(entry, ['prd', 'report']);
-    const prd = textField(entry.prd);
-    if (seen.has(prd)) throw new Error('WORK_REPORT_FORMAT: duplicate PRD');
-    seen.add(prd);
-    const ref = record(entry.report);
-    fields(ref, ['path', 'sha256']);
-    textField(ref.path);
-    hashField(ref.sha256);
-  }
-  return index as unknown as TaskIndex;
-}
-
-export async function readIndex(root: string) {
-  const catalog = await documentCatalog(root);
-  const source = await optionalText(root, indexPath);
-  const index: TaskIndex = source === null ? { version: 5, prds: [] } : parseIndex(source);
-  for (const entry of index.prds) {
-    const paths = bookPaths(entry.prd, catalog);
-    if (entry.prd !== paths.identity || entry.report.path !== paths.report)
-      throw new Error('WORK_REPORT_BINDING: index PRD/location mismatch');
-  }
-  if (source !== null && !(await sameMarkdown(source, renderIndex(index, catalog.documents))))
-    throw new Error('WORK_REPORT_INTEGRITY: index content differs from registry/results');
-  return { source, index };
-}
-
-export async function readBook(root: string, prd: string, index: TaskIndex) {
-  const catalog = await documentCatalog(root);
+export async function readBook(root: string, prd: string, catalog?: Catalog) {
+  catalog ??= await documentCatalog(root);
   const paths = bookPaths(prd, catalog);
   const source = await optionalText(root, paths.report);
-  const ref = index.prds.find((entry) => entry.prd === paths.identity)?.report;
   const recordsSource = await optionalText(root, paths.records);
-  if (source === null && ref === undefined && recordsSource === null)
+  if (source === null && recordsSource === null)
     return {
       book: { version: 5 as const, prd: paths.identity, results: [] },
       source,
       recordsSource,
     };
-  if (source === null || !ref || ref.path !== paths.report || digest(source) !== ref.sha256)
-    throw new Error('WORK_REPORT_INTEGRITY: report/index mismatch');
+  if (source === null || recordsSource === null)
+    throw new Error('WORK_REPORT_INTEGRITY: report/records pair missing');
   const navigation = record(metadata(source, 'mio-prd-results'));
   fields(navigation, ['version', 'prd', 'records']);
   if (navigation.version !== 5)
@@ -147,29 +106,29 @@ export async function readBook(root: string, prd: string, index: TaskIndex) {
   return { book, source, recordsSource };
 }
 
-// Input reading deliberately does not require the generated report/index: a journal may be
+// Input reading deliberately does not require the generated report: a journal may be
 // between their writes. The records themselves must still have valid ownership and accepted entries.
-async function checkedRecords(root: string, path: string) {
+async function checkedRecords(root: string, path: string, catalog?: Catalog) {
   const source = await optionalText(root, path);
   if (source === null) throw new Error(`WORK_INPUT_MISSING: ${path}`);
   const book = parseRecords(source);
-  const paths = bookPaths(book.prd, await documentCatalog(root));
+  const paths = bookPaths(book.prd, catalog ?? (await documentCatalog(root)));
   if (paths.identity !== book.prd || paths.records !== path)
     throw new Error('WORK_REPORT_BINDING: records/PRD mismatch');
   return { book, paths };
 }
 
-export async function readResultInput(root: string, path: string) {
+export async function readResultInput(root: string, path: string, catalog?: Catalog) {
   if (!hasResultSelector(path)) return optionalText(root, path);
   const selector = parseSelector(path);
-  const { book } = await checkedRecords(root, selector.path);
+  const { book } = await checkedRecords(root, selector.path, catalog);
   const result = book.results.find((entry) => entry.key === selector.key);
   if (!result) throw new Error(`WORK_INPUT_MISSING: ${path}`);
   return json(result);
 }
 
-export async function compactInputs(root: string, path: string, task: Task) {
-  const { book, paths } = await checkedRecords(root, path);
+export async function compactInputs(root: string, path: string, task: Task, catalog?: Catalog) {
+  const { book, paths } = await checkedRecords(root, path, catalog);
   return Object.fromEntries(
     book.results
       .filter(
@@ -248,27 +207,6 @@ const link = (from: string, to: string) =>
     .join('/');
 const label = (value: string) => value.replace(/[\\[\]`*_<>|]/g, '\\$&').replace(/\s+/g, ' ');
 
-export function renderIndex(index: TaskIndex, documents: TaskDocument[]) {
-  const rows = documents
-    .filter((entry) => entry.kind === 'prd')
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .map((prd) => {
-      const related = documents.filter(
-        (entry) => entry.kind !== 'prd' && beneath(entry.path, dirname(prd.path)),
-      );
-      const sources = [prd, ...related]
-        .map(
-          (entry) =>
-            `[${entry.kind === 'prd' ? '需求' : entry.kind === 'design' ? '设计' : label(entry.path.split('/').at(-1)!)}](${link(indexPath, entry.path)})`,
-        )
-        .join(' · ');
-      const report = index.prds.find((entry) => entry.prd === prd.identity)?.report;
-      return `| ${label(dirname(prd.path).split('/').at(-1)!)} | ${sources} | ${report ? `[已接受成果](${link(indexPath, report.path)})` : '暂无'} |`;
-    })
-    .join('\n');
-  return `# 任务资料与成果\n\n按 PRD 目录查找需求、设计与待评审提案。注册身份与位置只在 harness.config.json 的 taskDocuments 维护。本页由注册资料和成果索引生成；成果存在不代表整份 PRD 已完成，个人进度与待接受草稿留在 .work。\n\n| PRD | 任务资料 | 已接受成果 |\n| --- | --- | --- |\n${rows}\n\n\`\`\`mio-prd-index\n${json(index)}\`\`\`\n`;
-}
-
 export function renderBook(book: ResultBook, currentPath: string, bytes = json(book)) {
   const path = reportPath(currentPath);
   const entries = book.results
@@ -289,14 +227,13 @@ export function renderDraft(draft: ResultDraft) {
 }
 
 export async function checkReports(root: string, files: readonly string[]) {
-  if (!files.some((path) => path === indexPath || resultDocument(path))) return [];
+  if (!files.some(resultDocument)) return [];
   try {
-    const { index, source } = await readIndex(root);
     const catalog = await documentCatalog(root);
-    const linked = new Set(source === null ? [] : [indexPath]);
-    for (const entry of index.prds) {
-      const { book } = await readBook(root, entry.prd, index);
-      const paths = bookPaths(entry.prd, catalog);
+    const linked = new Set<string>();
+    for (const entry of catalog.documents.filter((document) => document.kind === 'prd')) {
+      const { book } = await readBook(root, entry.identity, catalog);
+      const paths = bookPaths(entry.identity, catalog);
       linked.add(paths.report);
       linked.add(paths.records);
       for (const result of book.results) await validateLocations(root, result, catalog);

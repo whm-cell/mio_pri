@@ -114,7 +114,7 @@ export async function normsReviewResult(
           const source = resolveDocument(path, catalog);
           return (
             source.kind !== undefined ||
-            (catalog.config.taskDocuments === undefined &&
+            (catalog.documents.length === 0 &&
               !plan.norms!.paths.includes(path) &&
               path !== 'docs/index.md' &&
               !taskNavigation(path) &&

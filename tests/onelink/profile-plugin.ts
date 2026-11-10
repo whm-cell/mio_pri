@@ -40,6 +40,7 @@ export function apply(ctx: Context) {
       new URL('./requests.jsonl', import.meta.url),
       JSON.stringify({
         authorization: request.headers.get('authorization'),
+        path: new URL(request.url).pathname,
         body,
       }) + '\n',
     );

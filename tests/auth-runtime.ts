@@ -115,7 +115,7 @@ export async function packedAuthRuntime(
       await writeFile(join(directory, 'model-fixture/catalog.json'), JSON.stringify(ids));
     },
     async onelinkRequests(): Promise<
-      { authorization: string | null; body: Record<string, unknown> }[]
+      { authorization: string | null; path: string; body: Record<string, unknown> }[]
     > {
       const data = await readFile(observationsPath, 'utf8').catch(
         (error: NodeJS.ErrnoException) => {

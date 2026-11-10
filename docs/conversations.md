@@ -1,6 +1,6 @@
 # 本地对话服务
 
-本期实现只接收测试账号和测试内容，D1/D2 本地交付结果及已披露限制已获用户接受，范围见[成果入口](tasks/conversation-service/complete/report.md)，尚无生产部署验收。真实文本观察按实际候选记录，不能代替 W2 的独立接受，Messages 真实验收继续单独 pending。真实用户内容保留/删除与上线容量另定；没有删除接口不代表无限保留授权。需求与接受条件见[对话 PRD](tasks/conversation-service/prd.md)，公开协议见[对话 HTTP](apis/conversations.md)。
+本期实现只接收测试账号和测试内容，D1/D2 本地交付结果及已披露限制已获用户接受，范围见[成果入口](tasks/conversation-service/complete/report.md)，尚无生产部署验收。真实文本观察按实际候选记录，不能代替 W2 的独立接受，Claude/Messages 的进一步适配与真实验收为后续条件项，不阻塞本期 W1/W2，原未验证事实保留。真实用户内容保留/删除与上线容量另定；没有删除接口不代表无限保留授权。需求与接受条件见[对话 PRD](tasks/conversation-service/prd.md)，公开协议见[对话 HTTP](apis/conversations.md)。
 
 ## 配置与迁移
 
@@ -53,6 +53,6 @@ W2 显式增量迁移保留可空对话模型绑定、可空请求绑定和观�
 
 `tests/conversations.test.ts` 经真实认证、PG、官方 loop、JSONL 和 HTTP/SSE 验证归属、多轮、忙时/去重、故障回执、订阅窗口、失效登录及断网；`tests/conversations-engine.test.ts` 验证多所有者异常关闭和无文本取消；`tests/conversations-profile.test.ts` 验证打包后的正式 Profile、多轮、正常重启及 SIGKILL。测试模型只安装在临时 Profile overlay，另有完全不含该 overlay 的正式装配验证，生产包不含测试夹具。
 
-`tests/onelink/` 经公开 PiAi codec、官方 loop、隔离 PG/JSONL 和正式打包 Profile 验证 BYOK；overlay 只替换固定出站 fetch，不替换生产 adapter，并验证源码目录外的虚构精确 ID。`node tests/conversations-live.ts <authorized-private-key-file> [exact-model-id] [openai-chat|anthropic-messages]` 是显式真实入口，默认 deepseek-v4.1-flash/openai-chat。模型须精确存在于本账号当前目录，再经受控声明与用户默认、公开 API 完成两轮、SSE/终态、取消、历史和重启，输出对应目录/适配版本；失败保留实际观察，不回退模拟或目录外型号。默认文本闭环不替代另一协议或 D1/D2 接受。
+`tests/onelink/` 经公开 PiAi codec、官方 loop、隔离 PG/JSONL 和正式打包 Profile 验证 BYOK；overlay 只替换固定出站 fetch，不替换生产 adapter，并验证源码目录外的虚构精确 ID。`node tests/conversations-live.ts <authorized-private-key-file> [exact-model-id] [openai-chat|anthropic-messages]` 是显式真实入口，默认 deepseek-v4.1-flash/openai-chat。模型须精确存在于本账号当前目录，再经受控声明与用户默认、公开 API 完成两轮、SSE/终态、取消、历史和重启，输出对应目录/适配版本；失败保留实际观察，不回退模拟或目录外型号。本期 W2 核验默认文本与模型扩展；Messages 的进一步适配和真实验收按 PRD 后续条件推进，保留既有确定性回归及未验证事实。D1/D2 已接受结果保持独立，不由新候选改写。
 
 精确历史仍完整读取/校验单会话日志，公开分页不等于低成本存储查询。列表按 owner/id 索引有界返回、回执按复合主键；本地证据不推导生产吞吐、任意崩溃零丢失或全模型可用。完整检查、独立审阅、真实供应商与人类接受分别判定。

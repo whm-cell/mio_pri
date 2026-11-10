@@ -8,7 +8,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy';
 import type { CredentialStore, SimpleStreamOptions, Model, Api } from '@earendil-works/pi-ai';
 import type { ConversationRun, ModelObservation } from '../conversations/contracts.ts';
-import type { ChatSelection, ChatRuntimeSnapshot } from '../providers/contracts.ts';
+import type { ChatProfile, ChatSelection, ChatRuntimeSnapshot } from '../providers/contracts.ts';
 import { ONELINK_ORIGIN } from '../integrations/onelink/models.ts';
 import { chatTransport } from '../integrations/onelink/chat.ts';
 import type { ChatResponseFacts } from '../integrations/onelink/chat.ts';
@@ -24,8 +24,34 @@ const noCredentials: CredentialStore = {
     throw new Error('ONELINK_NATIVE_AUTH_DENIED');
   },
 };
+// Protocol implementations, not a model list. A new profile must supply every wire choice.
+const chatProfiles = {
+  'openai-chat': {
+    provider: 'onelink-openai',
+    api: openAICompletionsApi,
+    apiId: 'openai-completions',
+    path: '/v1/chat/completions',
+    baseUrl: `${ONELINK_ORIGIN}/v1`,
+    compat: { maxTokensField: 'max_tokens', supportsStore: false },
+  },
+  'anthropic-messages': {
+    provider: 'onelink-anthropic',
+    api: anthropicMessagesApi,
+    apiId: 'anthropic-messages',
+    path: '/v1/messages',
+    baseUrl: ONELINK_ORIGIN,
+    // Disable SDK strict-tool downgrade/repost; Mio owns every visible attempt.
+    compat: { supportsStrictTools: false },
+  },
+} as const satisfies Record<ChatProfile, unknown>;
+
+function protocolProfile(profile: ChatProfile) {
+  if (!Object.hasOwn(chatProfiles, profile))
+    throw new LlmError('OneLink profile is not implemented', 'MODEL_PROFILE_UNSUPPORTED');
+  return chatProfiles[profile];
+}
 export const onelinkRoute = (selection: ChatSelection) =>
-  selection.protocol === 'anthropic-messages' ? 'onelink-anthropic' : 'onelink-openai';
+  protocolProfile(selection.protocol).provider;
 
 function metadata(
   provider: string,
@@ -44,14 +70,10 @@ function metadata(
 
 /** One immutable request's SDK provider; only the public protocol factories perform encoding. */
 function requestAdapter(run: ConversationRun, facts: ChatResponseFacts): PiAiAdapter {
-  const provider = onelinkRoute(run.snapshot);
-  const anthropic = run.snapshot.protocol === 'anthropic-messages';
-  const api = anthropic ? anthropicMessagesApi() : openAICompletionsApi();
-  const transport = chatTransport(
-    run.snapshot.apiKey,
-    anthropic ? '/v1/messages' : '/v1/chat/completions',
-    facts,
-  );
+  const protocol = protocolProfile(run.snapshot.protocol);
+  const provider = protocol.provider;
+  const api = protocol.api();
+  const transport = chatTransport(run.snapshot.apiKey, protocol.path, facts);
   const requestOptions = (options: SimpleStreamOptions | undefined): SimpleStreamOptions => {
     const rest = { ...options };
     delete rest.apiKey;
@@ -70,18 +92,15 @@ function requestAdapter(run: ConversationRun, facts: ChatResponseFacts): PiAiAda
     id: run.snapshot.modelId,
     name: run.snapshot.modelId,
     provider,
-    api: anthropic ? 'anthropic-messages' : 'openai-completions',
-    baseUrl: anthropic ? ONELINK_ORIGIN : `${ONELINK_ORIGIN}/v1`,
+    api: protocol.apiId,
+    baseUrl: protocol.baseUrl,
     input: ['text'],
     reasoning: false,
     // SDK 1.5.0 treats zero as unknown. Never expose this as supplier metadata.
     contextWindow: run.snapshot.contextWindow ?? 0,
     maxTokens: 1024,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    // Disable SDK strict-tool downgrade/repost; Mio owns every visible attempt.
-    ...(anthropic
-      ? { compat: { supportsStrictTools: false } }
-      : { compat: { maxTokensField: 'max_tokens', supportsStore: false } }),
+    compat: protocol.compat,
   };
   const piProvider = createProvider({
     id: provider,
@@ -285,6 +304,9 @@ export class OneLinkAdapter extends LlmAdapter {
 
 export function registerOneLink(ctx: Context): OneLinkAdapter {
   const adapter = new OneLinkAdapter();
-  ctx.llm.registerAdapter(['onelink-openai', 'onelink-anthropic'], adapter);
+  ctx.llm.registerAdapter(
+    Object.values(chatProfiles).map((profile) => profile.provider),
+    adapter,
+  );
   return adapter;
 }

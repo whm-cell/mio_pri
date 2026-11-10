@@ -52,6 +52,9 @@ it('limits deployment declarations to sourced, implemented profiles and cannot s
   expect(validateDeclaration(entry)).toEqual(entry);
   for (const patch of [
     { profile: 'unknown' },
+    { profile: ['openai-chat'] },
+    { profile: null },
+    { profile: { toString: () => 'openai-chat' } },
     { operation: 'image' },
     { source: '' },
     { verified: true },

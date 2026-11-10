@@ -9,6 +9,7 @@ import { importDeclaration } from '../fixtures/provider-declaration.ts';
 let database: Awaited<ReturnType<typeof authDatabase>>;
 let runtime: Awaited<ReturnType<typeof packedAuthRuntime>>;
 let observer: Pool;
+let declarationEnv: NodeJS.ProcessEnv;
 const cookies: string[] = [];
 const owners: string[] = [];
 const ref = 'onelink:chat:deepseek-v4.1-flash';
@@ -70,6 +71,7 @@ beforeAll(async () => {
     MIO_PROVIDERS_MASTER_KEY: master,
     MIO_PROVIDERS_MASTER_KEY_ID: 'w2-profile',
   };
+  declarationEnv = env;
   for (const file of ['auth', 'providers', 'conversations']) {
     const result = spawnSync(process.execPath, [`scripts/service/migrate-${file}.ts`, '--apply'], {
       env,
@@ -323,6 +325,125 @@ it('freezes accepted credentials through a pause after prepare and before actual
     'Bearer synthetic-after-prepare',
   );
 });
+
+it('discovers new exact IDs after startup and reuses declared protocols through the packed user flow', async () => {
+  const suffix = randomBytes(8).toString('hex');
+  const variants = [
+    {
+      id: `Future.Mixed:Route-X-${suffix}`,
+      profile: 'openai-chat' as const,
+      path: '/v1/chat/completions',
+    },
+    {
+      id: `future.Mixed:Route-X-${suffix}`,
+      profile: 'openai-chat' as const,
+      path: '/v1/chat/completions',
+    },
+    {
+      id: `openai-looking.Messages:${suffix}`,
+      profile: 'anthropic-messages' as const,
+      path: '/v1/messages',
+    },
+  ];
+  const pendingId = `claude-looking.Pending:${suffix}`;
+  const originalIds = ['deepseek-v4.1-flash', 'claude-sonnet-4.5-20250929'];
+  const count = (await runtime.onelinkRequests()).length;
+  try {
+    await runtime.setOnelinkCatalog([
+      ...originalIds,
+      ...variants.map((item) => item.id),
+      pendingId,
+    ]);
+    await refresh();
+    const discovered = (await (await call('/api/v1/providers/onelink/models')).json()) as {
+      items: {
+        modelId: string;
+        modelRef: string;
+        modelKey: string;
+        category: string | null;
+        adaptation: unknown;
+        unavailableReason: string;
+      }[];
+    };
+    const additions = discovered.items.filter((item) => item.modelId.endsWith(suffix));
+    expect(additions).toHaveLength(4);
+    expect(new Set(additions.map((item) => item.modelKey)).size).toBe(4);
+    for (const item of additions) {
+      expect(item).toMatchObject({
+        category: null,
+        adaptation: null,
+        unavailableReason: 'ADAPTER_PENDING',
+      });
+      const denied = await call('/api/v1/conversations', 'POST', { modelRef: item.modelRef });
+      expect(denied.status).toBe(409);
+      expect(await denied.json()).toMatchObject({ error: { code: 'ADAPTER_PENDING' } });
+    }
+    const absent = await call('/api/v1/conversations', 'POST', {
+      modelRef: `onelink:chat:absent-${suffix}`,
+    });
+    expect(absent.status).toBe(409);
+    expect(await absent.json()).toMatchObject({ error: { code: 'MODEL_NOT_FOUND' } });
+    expect((await runtime.onelinkRequests()).length).toBe(count);
+    const state = (await (await call('/api/v1/providers/onelink')).json()) as {
+      credentialVersion: number;
+      catalog: { version: number };
+    };
+    for (const variant of variants) {
+      const model = additions.find((item) => item.modelId === variant.id)!;
+      await importDeclaration(
+        declarationEnv,
+        owners[0]!,
+        await revision(),
+        model.modelRef,
+        variant.profile,
+      );
+      const id = await create(0, model.modelRef);
+      const before = (await runtime.onelinkRequests()).length;
+      for (const requestId of ['extension-first', 'extension-second']) {
+        expect((await send(id, requestId, `remember ${variant.id}`)).status).toBe(202);
+        expect(await terminal(id, requestId)).toBe('completed');
+      }
+      const requests = (await runtime.onelinkRequests()).slice(before);
+      expect(requests).toHaveLength(2);
+      expect(requests.map((request) => request.path)).toEqual([variant.path, variant.path]);
+      expect(requests.map((request) => request.body.model)).toEqual([variant.id, variant.id]);
+      expect(JSON.stringify(requests[1]!.body.messages)).toContain('fixture answer');
+      const rows = (
+        await observer.query<{ model_binding: Record<string, unknown> }>(
+          'SELECT model_binding FROM mio_conversation_requests WHERE conversation_id=$1 ORDER BY created_at',
+          [id],
+        )
+      ).rows;
+      expect(rows).toHaveLength(2);
+      for (const row of rows)
+        expect(row.model_binding).toMatchObject({
+          modelId: variant.id,
+          modelKey: model.modelKey,
+          profile: variant.profile,
+          credentialVersion: state.credentialVersion,
+          catalogVersion: state.catalog.version,
+          adaptationVersion: 1,
+        });
+      expect((await call(`/api/v1/conversations/${id}/history`)).status).toBe(200);
+    }
+    expect((await runtime.onelinkRequests()).length).toBe(count + 6);
+    const after = (await (
+      await call('/api/v1/providers/onelink/models')
+    ).json()) as typeof discovered;
+    for (const model of additions)
+      expect(after.items.find((item) => item.modelId === model.modelId)).toMatchObject({
+        modelRef: model.modelRef,
+        modelKey: model.modelKey,
+      });
+    expect(after.items.find((item) => item.modelId === pendingId)).toMatchObject({
+      adaptation: null,
+      unavailableReason: 'ADAPTER_PENDING',
+    });
+  } finally {
+    await runtime.setOnelinkCatalog(originalIds);
+    await refresh();
+  }
+}, 30000);
 
 it('settles a real stream idle deadline without reposting the paid request', async () => {
   const id = await create();

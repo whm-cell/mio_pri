@@ -13,6 +13,7 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
 import { OneLinkAdapter } from '../../src/dsh/onelink.ts';
 import { createDshConversationEngine } from '../../src/dsh/conversations.ts';
 import type { ConversationRun, ModelObservation } from '../../src/conversations/contracts.ts';
+import type { ChatProfile } from '../../src/providers/contracts.ts';
 import { kernelRuntime, ScriptedModel } from '../kernel-runtime.ts';
 import { protocolResponse, protocolToolResponse } from './fixture.ts';
 
@@ -90,6 +91,10 @@ it.each([false, true])(
         );
       }
       expect(requests).toHaveLength(2);
+      expect(requests.map(({ body }) => body.model)).toEqual([selected.modelId, selected.modelId]);
+      expect(requests.map(({ request }) => new URL(request.url).pathname)).toEqual(
+        Array(2).fill(anthropic ? '/v1/messages' : '/v1/chat/completions'),
+      );
       expect(requests[0]!.request.headers.get('authorization')).toBe('Bearer synthetic-owner-key');
       expect(requests[0]!.request.headers.has('x-api-key')).toBe(false);
       expect(requests[0]!.request.redirect).toBe('error');
@@ -127,6 +132,37 @@ it.each([false, true])(
       await engine.close();
       await ctx.fiber.dispose();
       await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each(['future-protocol', '__proto__', 'constructor'])(
+  'refuses an unimplemented internal profile %s before preparing or dispatching a request',
+  async (profile) => {
+    const adapter = new OneLinkAdapter();
+    const transport = vi.fn();
+    vi.stubGlobal('fetch', transport);
+    const controller = new AbortController();
+    const initial = binding('unsupported', []);
+    const run = {
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        protocol: profile as ChatProfile,
+        profile: profile as ChatProfile,
+      },
+    };
+    const release = adapter.bind(controller.signal, run);
+    try {
+      await expect(
+        adapter.resolveModel('onelink-openai', run.snapshot.modelId, controller.signal),
+      ).rejects.toMatchObject({ code: 'MODEL_PROFILE_UNSUPPORTED' });
+      await expect(
+        adapter.prepareCall('onelink-openai', run.snapshot.modelId, controller.signal),
+      ).rejects.toMatchObject({ code: 'MODEL_PROFILE_UNSUPPORTED' });
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      release();
     }
   },
 );

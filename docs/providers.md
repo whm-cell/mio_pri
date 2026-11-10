@@ -1,6 +1,6 @@
 # 用户万联配置与动态模型目录
 
-每个登录用户持有一个逻辑 `onelink` 配置；身份沿[认证底座](auth.md)，接口正文见[供应商 HTTP](apis/providers.md)，出站见[万联集成](integrations/onelink.md)。[万联 PRD](tasks/onelink-integration/prd.md)维护需求。当前 W1/W2 为待核验、待接受的本地实现；目录、协议实现、真实观察和业务接受分别判定。
+每个登录用户持有一个逻辑 `onelink` 配置；身份沿[认证底座](auth.md)，接口正文见[供应商 HTTP](apis/providers.md)，出站见[万联集成](integrations/onelink.md)。[万联 PRD](tasks/onelink-integration/prd.md)维护需求。当前 W1/W2 为待核验、待接受的本地实现；本期核验动态目录、模型扩展及默认文本，Claude/Messages 进一步适配与真实验收为后续项，保留现有实现与确定性回归；目录、协议实现、真实观察和业务接受分别判定。
 
 ## 配置与迁移
 
@@ -73,6 +73,12 @@ pnpm providers:adapt <owner-id> <expected-revision> <declaration.json>
 classification 可省略；可选 `metadata.contextWindow` 只能是有来源的正整数。未知上下文/价格/工具/媒体能力不补值。来源明确是部署声明，不冒充供应商元数据。入口不创造成员、不接收代码/URL/Key/verified，不开放普通用户管理 API。每次声明更新递增独立版本并使验证待核对，分类变化保留身份/偏好。
 
 验证只来自对应成功运行观察，绑定 credential/catalog/adaptation 版本及 operation/profile。刷新、轮换或声明变化使当前验证失效但保留旧观察引用；旧运行晚完成不能覆盖新版本验证，原请求观察仍保留。实际调用允许已实现但未实测项用于授权验证，不能提前展示已验证。
+
+### 模型扩展边界
+
+新精确 ID 经成功目录发现后可关联已有且实际兼容的 profile，不新增生产型号名单。声明仅接受字符串形式的已实现 profile；未知或非字符串值拒绝。运行适配层显式选择路由、codec、端点及兼容项，未知值不落入 OpenAI 默认路径。参数差异或新协议须有实际依据，在适配边界补实现、必要准入/存储约束及回归；配置不创造能力，也不重建稳定身份、账号或会话。
+
+本期保留两协议确定性测试，真实文本使用当前目录精确 DeepSeek。Messages 后续未验不阻塞本期，也不能展示为已验证；触发及验收见[万联 PRD](tasks/onelink-integration/prd.md#对话验收衔接)。
 
 ## W2 消费与验证入口
 

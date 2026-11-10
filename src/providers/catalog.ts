@@ -57,7 +57,8 @@ export function validateDeclaration(value: unknown): AdaptationDeclaration {
     ) ||
     typeof entry.modelRef !== 'string' ||
     entry.operation !== 'chat' ||
-    !['openai-chat', 'anthropic-messages'].includes(String(entry.profile)) ||
+    typeof entry.profile !== 'string' ||
+    !['openai-chat', 'anthropic-messages'].includes(entry.profile) ||
     [entry.source, entry.sourceVersion].some(
       (item) => typeof item !== 'string' || !item.trim() || item.length > 512,
     )

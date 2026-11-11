@@ -1,15 +1,11 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { recordsFile } from './work/compact-store.ts';
+import { beneath, parseHarnessConfig } from './source-config.ts';
+import type { HarnessConfig } from './source-config.ts';
 
-export interface HarnessConfig {
-  sourceRoots: Record<string, 'production' | 'test' | 'development'>;
-  developmentDependencies: Record<string, string[]>;
-  documentRoots: string[];
-  privateRoots: string[];
-  generatedRoots: string[];
-  configurationFiles: string[];
-}
+export { beneath } from './source-config.ts';
+export type { HarnessConfig } from './source-config.ts';
 
 export interface TaskDocument {
   identity: string;
@@ -18,13 +14,11 @@ export interface TaskDocument {
   aliases?: string[];
 }
 
-export const beneath = (path: string, root: string): boolean =>
-  path === root || path.startsWith(`${root}/`);
 const taskRegistryFile = (path: string) =>
   /^docs\/tasks\/[a-z0-9][a-z0-9_-]*\/documents\.json$/.test(path);
 
 export async function loadConfig(root: string): Promise<HarnessConfig> {
-  return JSON.parse(await readFile(join(root, 'harness.config.json'), 'utf8')) as HarnessConfig;
+  return parseHarnessConfig(await readFile(join(root, 'harness.config.json'), 'utf8'));
 }
 
 /** Inspect every file before classifying extensions; never follow directory symlinks. */

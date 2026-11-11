@@ -1,5 +1,8 @@
 packages:
   - .
+  - contracts/compute
+  - compute
+verifyDepsBeforeRun: error
 overrides:
   '@opentelemetry/api': 1.9.0
 minimumReleaseAgeExclude:

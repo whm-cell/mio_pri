@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { afterEach, expect, it } from 'vitest';
+import { legacyBuild, legacyHarness, legacyTypecheck } from './guardrail-fixture.ts';
 
 const project = resolve('.');
 const scratch: string[] = [];
@@ -46,6 +47,30 @@ afterEach(async () => {
 });
 
 it.each([
+  ['src/integrations/cos.ts', 0],
+  ['src/integrations/cos-extra.ts', 1],
+  ['src/assets/service.ts', 1],
+] as const)('limits COS package imports, including type-only imports: %s', async (file, status) => {
+  const root = await fixture({ [file]: "export type * from 'cos-nodejs-sdk-v5';" });
+  await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+  const result = check(root);
+  expect(result.status, result.output).toBe(status);
+  if (status) expect(result.output).toContain('COS_ADAPTER');
+});
+
+it('rejects the COS package under a business import alias', async () => {
+  const root = await fixture({ 'src/assets/service.ts': "export type * from 'storage-alias';" });
+  await symlink(join(project, 'node_modules'), join(root, 'node_modules'), 'dir');
+  const path = join(root, 'tsconfig.json');
+  const config = JSON.parse(await readFile(path, 'utf8'));
+  config.compilerOptions.paths = {
+    'storage-alias': [createRequire(import.meta.url).resolve('cos-nodejs-sdk-v5')],
+  };
+  await writeFile(path, JSON.stringify(config));
+  expect(check(root).output).toContain('COS_ADAPTER');
+});
+
+it.each([
   ['scripts/service/import-provider-adaptation.ts', 'src/providers/store.ts', 0],
   ['scripts/service/import-provider-adaptation.ts', 'src/providers/catalog.ts', 1],
   ['scripts/service/import-provider-adaptation.ts', 'src/providers/contracts.ts', 0],
@@ -78,6 +103,14 @@ it.each([
   ['src/providers/schema.ts', 0],
   ['src/providers/service.ts', 1],
   ['src/providers-extra/store.ts', 1],
+  ['src/assets/store.ts', 0],
+  ['src/assets/schema.ts', 0],
+  ['src/assets/service.ts', 1],
+  ['src/assets-extra/store.ts', 1],
+  ['src/compute/store.ts', 0],
+  ['src/compute/schema.ts', 0],
+  ['src/compute/service.ts', 1],
+  ['src/compute-extra/store.ts', 1],
 ] as const)(
   'limits business PostgreSQL imports to reviewed conversation/provider adapters: %s',
   async (file, status) => {
@@ -95,6 +128,12 @@ it.each([
   ['src/providers/store.ts', 'database-alias', 'pg', 0],
   ['src/providers/store.ts', 'pg', 'better-auth', 1],
   ['src/providers/service.ts', 'database-alias', 'pg', 1],
+  ['src/assets/store.ts', 'database-alias', 'pg', 0],
+  ['src/assets/store.ts', 'pg', 'better-auth', 1],
+  ['src/assets/service.ts', 'database-alias', 'pg', 1],
+  ['src/compute/store.ts', 'database-alias', 'pg', 0],
+  ['src/compute/store.ts', 'pg', 'better-auth', 1],
+  ['src/compute/service.ts', 'database-alias', 'pg', 1],
 ] as const)(
   'keeps package identity checks behind database aliases: %s, %s -> %s',
   async (file, alias, target, status) => {
@@ -115,9 +154,9 @@ it.each([
 async function fixture(extra: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), 'mio-guard-'));
   scratch.push(root);
-  await cp(join(project, 'harness.config.json'), join(root, 'harness.config.json'));
-  await cp(join(project, 'tsconfig.json'), join(root, 'tsconfig.json'));
-  await cp(join(project, 'tsconfig.build.json'), join(root, 'tsconfig.build.json'));
+  await writeFile(join(root, 'harness.config.json'), JSON.stringify(legacyHarness()));
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify(legacyTypecheck()));
+  await writeFile(join(root, 'tsconfig.build.json'), JSON.stringify(legacyBuild()));
   for (const [file, text] of Object.entries({
     'README.md': '# Fixture\n',
     'src/value.ts': 'export const value = 1;\n',
@@ -139,6 +178,20 @@ function check(root: string) {
   );
   return { status: result.status, output: `${result.stdout}\n${result.stderr}` };
 }
+
+it('builds a self-contained legacy fixture independent of the host project declarations', async () => {
+  const root = await fixture({});
+  const config = JSON.parse(await readFile(join(root, 'harness.config.json'), 'utf8')) as {
+    projects?: unknown;
+    sourceRoots: Record<string, string>;
+  };
+  expect(config.projects).toBeUndefined();
+  expect(
+    Object.keys(config.sourceRoots).filter((root) => config.sourceRoots[root] === 'production'),
+  ).toEqual(['src']);
+  const result = check(root);
+  expect(result.status, result.output).toBe(0);
+});
 
 it.each([
   ['src/integrations/redis.ts', 0],
@@ -441,6 +494,8 @@ it('accepts same-module development imports and rejects harness/service/type-exp
 
 it('checks aliases and dynamic targets across development boundaries, and includes development cycles', async () => {
   const root = await fixture({
+    // Keep resolution independent of the enclosing worktree's package type.
+    'package.json': JSON.stringify({ type: 'commonjs' }),
     'scripts/harness/a.ts': "import '@service/value';",
     'scripts/service/value.ts': 'export const value = 1;',
   });
@@ -525,7 +580,7 @@ it('rejects forcibly tracked private files without reading their contents', asyn
   expect(result.output).not.toContain('private fixture content');
 });
 
-it('refuses a classified production root omitted from typecheck and build configuration', async () => {
+it('requires projects when a second production root is classified', async () => {
   const root = await fixture({ 'worker/run.ts': "export const count: number = 'wrong';\n" });
   const configuration = JSON.parse(
     await (await import('node:fs/promises')).readFile(join(root, 'harness.config.json'), 'utf8'),
@@ -534,8 +589,18 @@ it('refuses a classified production root omitted from typecheck and build config
   await writeFile(join(root, 'harness.config.json'), JSON.stringify(configuration));
   const result = check(root);
   expect(result.status, result.output).toBe(1);
-  expect(result.output).toContain('SOURCE_NOT_TYPECHECKED worker/run.ts');
-  expect(result.output).toContain('SOURCE_NOT_BUILT worker/run.ts');
+  expect(result.output).toContain('PROJECTS_REQUIRED');
+});
+
+it('rejects a legacy build that suppresses executable output', async () => {
+  const root = await fixture({});
+  const path = join(root, 'tsconfig.build.json');
+  const config = JSON.parse(await readFile(path, 'utf8')) as {
+    compilerOptions: { noEmit?: boolean };
+  };
+  config.compilerOptions.noEmit = true;
+  await writeFile(path, JSON.stringify(config));
+  expect(check(root).output).toContain('PROJECT_BUILD_EMIT root');
 });
 
 it('allows only the explicit service migration config edge and isolates auth packages', async () => {

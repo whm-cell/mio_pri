@@ -13,6 +13,7 @@ import { requirementIssues } from './requirements.ts';
 import { readConflict } from './reconciliation.ts';
 import { manualEvidenceResult } from './manual-evidence.ts';
 import { artifact, automatedEvidence } from './evidence.ts';
+export { runtimeEnvironment as environment } from './verification-proof.ts';
 
 export { artifact } from './evidence.ts';
 
@@ -215,10 +216,12 @@ export async function assess(
         item.candidate === current.candidate,
     );
     if (criterion.method === 'automated') {
+      const observation = await automatedEvidence(root, task.plan.id, entries, criterion.command);
       evidence.push({
         criterion: criterion.id,
         method: criterion.method,
-        result: (await automatedEvidence(root, task.plan.id, entries, criterion.command)).result,
+        result: observation.result,
+        ...('basis' in observation ? { basis: observation.basis } : {}),
       });
       continue;
     }
@@ -310,10 +313,6 @@ export async function assess(
     },
     nextAction: task.plan.nextAction,
   };
-}
-
-export function environment(): string {
-  return `${process.platform}/${process.arch}; Node ${process.version}`;
 }
 
 export function addEvidence(task: Task, entry: Evidence) {

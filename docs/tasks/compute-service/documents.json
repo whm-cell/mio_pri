@@ -10,6 +10,11 @@
       "identity": "docs/tasks/compute-service/design.md",
       "kind": "design",
       "path": "docs/tasks/compute-service/design.md"
+    },
+    {
+      "identity": "docs/tasks/compute-service/protocol.md",
+      "kind": "design",
+      "path": "docs/tasks/compute-service/protocol.md"
     }
   ]
 }

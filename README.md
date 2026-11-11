@@ -2,6 +2,10 @@
 
 本仓库是独立的后端 TypeScript 插件服务，由官方 DeepSeek Harness Profile 启动，不包含前端 UI。提供基础 HTTP、账号认证及全部拒绝的工具策略；[本地对话服务](docs/conversations.md)包括用户归属、BYOK 文本、多轮、原生内容持久化、历史、SSE 与取消。实际接受范围与限制见[成果入口](docs/tasks/conversation-service/complete/report.md)，开发安排见[对话 PRD](docs/tasks/conversation-service/prd.md)。项目/媒体生成尚未实现。认证边界见[认证底座](docs/auth.md)，内核边界见 [DSH 契约](docs/integrations/dsh.md)。
 
+用户资产入口按[资产 API](docs/apis/assets.md)和[私有 COS 契约](docs/integrations/cos.md)配置独立媒体数据库与桶；显式执行 `pnpm assets:migrate --apply` 后启用。当前开发与真实云验收状态以[任务资料](docs/tasks/compute-service/prd.md)及实际证据为准，不能据此推断转码链路已完成。
+
+计算服务的 A/B 独立产物、官方 DSH 宿主、本机迁移与启动顺序见[计算服务设计](docs/tasks/compute-service/design.md#本机独立产物与启动)。运行秘密和数据使用各自的受保护环境与目录；真实服务器部署和生产验收留待后续节点。
+
 - [资料导航与权威位置](docs/index.md)
 - [底座范围、边界与规则](docs/foundation.md)
 - [任务需求、设计与候选](docs/tasks/index.md)
@@ -20,6 +24,8 @@
 使用 Node 24.22.2（DSH 最低要求 24.9）及 pnpm 11.6.0。版本固定在 package.json 和锁文件；公共安装、构建和 CI 不需要相邻源码仓库、全局 Skills 或成员的个人记录。
 
 认证集成测试需要隔离 PostgreSQL 和 Redis 8.2.11 二进制，选择与清理要求见 [PostgreSQL](docs/integrations/postgres.md#验证入口与变更影响) 和 [Redis 验证入口](docs/integrations/redis.md#验证入口与变更影响)。Redis 测试各自启动临时进程，不能指向共享实例；切换/恢复演练真实等待三次 65 秒，完整检查需要数分钟。认证运行配置和迁移见[认证底座](docs/auth.md)。
+
+全新 checkout 的工作 CLI 尚未装依赖时，先核对仓库、锁文件、写入范围和缓存/临时目录，执行下面的一次受控冻结安装并保留命令结果；CLI 可用后按事实补录初始化，不追认安装前已有 C1。缺依赖时 `pnpm work` 显式报错，不自动安装；后续依赖变更仍按[实施与协作](docs/coordination.md#实施与协作)执行。
 
 ```sh
 pnpm install --frozen-lockfile --ignore-scripts

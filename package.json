@@ -34,8 +34,8 @@
     }
   },
   "scripts": {
-    "build": "node scripts/service/build.ts",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc -p contracts/compute/tsconfig.build.json && node scripts/service/build.ts && pnpm --filter @mio/compute-worker build",
+    "typecheck": "tsc -p contracts/compute/tsconfig.build.json && tsc --noEmit && tsc -p compute/tsconfig.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -46,6 +46,8 @@
     "profile:prepare": "node scripts/service/prepare-profile.ts",
     "auth:migrate": "node scripts/service/migrate-auth.ts",
     "conversations:migrate": "node scripts/service/migrate-conversations.ts",
+    "assets:migrate": "node scripts/service/migrate-assets.ts",
+    "compute:migrate": "node scripts/service/migrate-compute.ts",
     "providers:migrate": "node scripts/service/migrate-providers.ts",
     "providers:adapt": "node scripts/service/import-provider-adaptation.ts",
     "start": "node scripts/service/start.ts",
@@ -77,8 +79,11 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
     "@deepseek-ai/schemastery": "3.19.0",
     "@earendil-works/pi-ai": "1.5.0",
+    "@mio/compute-contracts": "workspace:*",
     "@redis/client": "6.2.1",
+    "amqplib": "2.2.1",
     "better-auth": "1.7.18",
+    "cos-nodejs-sdk-v5": "3.0.0",
     "pg": "8.23.1"
   },
   "devDependencies": {

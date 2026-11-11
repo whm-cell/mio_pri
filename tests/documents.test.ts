@@ -321,7 +321,11 @@ it.each([
 it('offers the real read-only documents CLI without a member directory or an automatic migration', async () => {
   const root = await taskFixture();
   const configPath = join(root, 'harness.config.json');
-  const raw = JSON.stringify({ ...config, configurationFiles: ['harness.config.json'] });
+  const raw = JSON.stringify({
+    ...config,
+    sourceRoots: { src: 'production' },
+    configurationFiles: ['harness.config.json'],
+  });
   await writeFile(configPath, raw);
   const result = spawnSync(
     process.execPath,

@@ -21,6 +21,15 @@ import { createProviderStore } from './providers/store.ts';
 import { createProviderService } from './providers/service.ts';
 import type { ProviderService } from './providers/service.ts';
 import { createProviderHandler } from './providers/http.ts';
+import { readAssetConfig } from './assets/config.ts';
+import { createAssetStore } from './assets/store.ts';
+import { createAssetService } from './assets/service.ts';
+import { createAssetHandler } from './assets/http.ts';
+import { createCosStorage } from './integrations/cos.ts';
+import { readComputeConfig } from './compute/config.ts';
+import { createComputeStore } from './compute/store.ts';
+import { createComputeService } from './compute/service.ts';
+import { createComputeHandler } from './compute/http.ts';
 
 export const name = 'mio-foundation';
 export const inject = ['webServer', 'tools'];
@@ -41,6 +50,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   denyModelTools(ctx);
   const authConfig = readAuthConfig();
   const providerConfig = readProviderConfig();
+  const assetConfig = readAssetConfig();
+  const computeConfig = readComputeConfig();
   const conversationConfig = readConversationConfig(process.env, Boolean(providerConfig));
   const handler = createHandler({
     token: process.env[config.tokenEnv] ?? '',
@@ -52,6 +63,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (conversationConfig && !authConfig)
     throw new Error('CONVERSATION_CONFIG: authentication required');
   if (providerConfig && !authConfig) throw new Error('PROVIDER_CONFIG: authentication required');
+  if (assetConfig && !authConfig) throw new Error('ASSET_CONFIG: authentication required');
+  if (computeConfig && (!authConfig || !assetConfig))
+    throw new Error('COMPUTE_CONFIG: authentication and assets required');
   const backend = readAuthRateLimitBackend();
   if (backend === 'redis' && !authConfig)
     throw new Error('AUTH_CONFIG: authentication is required for Redis rate limiting');
@@ -81,6 +95,46 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         handler: authHandler,
       }),
     );
+    if (assetConfig) {
+      const store = await createAssetStore(assetConfig.databaseURL);
+      let assets: ReturnType<typeof createAssetService> | undefined;
+      try {
+        const acquired = (assets = createAssetService(store, createCosStorage(assetConfig)));
+        ctx.effect(() => async () => acquired.close());
+        ctx.effect(() =>
+          ctx.webServer.register({
+            kind: 'prefix',
+            path: '/api/v1/assets',
+            handler: createAssetHandler(acquired, auth.identity, authConfig.origins),
+          }),
+        );
+      } catch (error) {
+        await (assets ? assets.close() : store.close());
+        throw error;
+      }
+    }
+    if (computeConfig && assetConfig) {
+      const store = await createComputeStore(assetConfig.databaseURL);
+      let compute: ReturnType<typeof createComputeService> | undefined;
+      try {
+        const acquired = (compute = createComputeService(
+          store,
+          createCosStorage(assetConfig),
+          computeConfig,
+        ));
+        ctx.effect(() => async () => acquired.close());
+        ctx.effect(() =>
+          ctx.webServer.register({
+            kind: 'prefix',
+            path: '/api/v1/compute',
+            handler: createComputeHandler(acquired, auth.identity, authConfig.origins),
+          }),
+        );
+      } catch (error) {
+        await (compute ? compute.close() : store.close());
+        throw error;
+      }
+    }
     let providers: ProviderService | undefined;
     let conversations: ConversationService | undefined;
     if (providerConfig) {

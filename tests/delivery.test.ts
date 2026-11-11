@@ -42,6 +42,12 @@ import {
 import { inventory, loadConfig } from '../scripts/harness/inventory.ts';
 import { documentCatalog, resolveDocument } from '../scripts/harness/task-documents.ts';
 import { reviewFixture, reviewMarkdown } from './quality-review-fixture.ts';
+import { verify } from '../scripts/harness/work/verification.ts';
+import {
+  fullCommand,
+  record as recordVerification,
+  testConditions,
+} from './verification-fixture.ts';
 
 const project = resolve('.');
 const prd = 'docs/tasks/product/prd.md';
@@ -251,6 +257,110 @@ async function prepareRequest(root: string, id = 'probe') {
 async function prepare(root: string, id = 'probe') {
   return deliver(root, id, json(await prepareRequest(root, id)));
 }
+
+it.each([false, true])(
+  'keeps reused checks consistent through prepare and complete (source failure: %s)',
+  async (fail) => {
+    const root = await fixture();
+    for (const id of ['source', 'probe']) {
+      await setup(root, id);
+      const { task, raw } = await loadTask(root, id);
+      task.plan.acceptance[0]!.command = [process.execPath, '-e', 'process.exit(0)'];
+      await saveTask(root, task, raw);
+      await passing(root, id);
+    }
+    const executed = invoke(root, ['run', 'source', 'checks', '--stdin'], {
+      conditions: testConditions,
+    });
+    expect(executed.status, executed.stderr).toBe(0);
+    const entry = (await loadTask(root, 'source')).task.evidence.at(-1)!;
+    const baseline = { task: 'source', criterion: 'checks', sha256: entry.sha256 };
+    const current = await verify(root, 'probe', 'checks', { action: 'inspect', baseline });
+    await verify(root, 'probe', 'checks', {
+      action: 'record',
+      baseline,
+      revision: 'revision' in current ? current.revision : '',
+      mode: 'reuse',
+      coverage:
+        'Same fixture files and actual check; independent manual criteria retain their own observations.',
+      environment: {
+        identity: 'environment' in current ? current.environment : '',
+        conditions: testConditions,
+        reason: 'Identical isolated fixture conditions.',
+      },
+    });
+    await prepare(root);
+    if (fail) {
+      expect(
+        invoke(root, ['run', 'source', 'checks', '--', process.execPath, '-e', 'process.exit(2)'])
+          .status,
+      ).toBe(1);
+      expect(
+        (await assess(root, (await loadTask(root, 'probe')).task)).evidence[0]!.result,
+      ).not.toBe('pass');
+      await expect(prepare(root)).rejects.toThrow();
+      await expect(deliver(root, 'probe', json(await completeRequest(root)))).rejects.toThrow();
+    } else {
+      await deliver(root, 'probe', json(await completeRequest(root)));
+      expect((await loadTask(root, 'probe')).task.stage).toBe('C1_RELEASED');
+    }
+  },
+);
+
+it.each(['probe', 'source'])(
+  'composes scoped supplemental receipts through prepare and complete (origin: %s)',
+  async (origin) => {
+    const root = await fixture();
+    for (const id of ['source', 'probe']) {
+      await setup(root, id);
+      const { task, raw } = await loadTask(root, id);
+      task.plan.acceptance[0]!.command = fullCommand;
+      await saveTask(root, task, raw);
+      await passing(root, id);
+    }
+    const full = invoke(root, ['run', origin, 'checks', '--stdin'], { conditions: testConditions });
+    expect(full.status, full.stderr).toBe(0);
+    const fullEntry = (await loadTask(root, origin)).task.evidence.at(-1)!;
+    const baseline = { task: origin, criterion: 'checks', sha256: fullEntry.sha256 };
+    const command = [
+      process.execPath,
+      '-e',
+      "require('node:fs').appendFileSync('.work/count','probe\\n')",
+    ];
+    const probe = invoke(root, ['run', origin, 'checks', '--stdin'], {
+      conditions: testConditions,
+      command,
+    });
+    expect(probe.status, probe.stderr).toBe(0);
+    const probeEntry = (await loadTask(root, origin)).task.evidence.at(-1)!;
+    const original = { task: origin, criterion: 'checks', sha256: probeEntry.sha256 };
+    const { task, raw } = await loadTask(root, 'probe');
+    task.plan.acceptance.push({
+      id: 'scoped',
+      method: 'automated',
+      criterion: 'Retain the actual focused observation.',
+      command,
+    });
+    await saveTask(root, task, raw);
+    await passing(root);
+    const scoped = recordVerification(root, 'probe', original, {}, 'scoped');
+    expect(scoped.status, scoped.output).toBe(0);
+    const entry = (await loadTask(root, 'probe')).task.evidence.at(-1)!;
+    const composed = recordVerification(root, 'probe', baseline, {
+      mode: 'incremental',
+      runs: [{ task: 'probe', criterion: 'scoped', sha256: entry.sha256 }],
+    });
+    expect(composed.status, composed.output).toBe(0);
+    const checked = invoke(root, ['context', 'probe', 'resume']);
+    expect(checked.status, checked.stderr).toBe(0);
+    expect(JSON.parse(checked.stdout).assessment.evidence[0].result).toBe('pass');
+    await prepare(root);
+    await deliver(root, 'probe', json(await completeRequest(root)));
+    expect((await loadTask(root, 'probe')).task.stage).toBe('C1_RELEASED');
+    expect(await readFile(join(root, '.work/count'), 'utf8')).toBe('full\nprobe\n');
+  },
+);
+
 async function completeRequest(root: string, id = 'probe') {
   const { task, raw } = await loadTask(root, id);
   return {

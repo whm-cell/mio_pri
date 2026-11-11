@@ -10,3 +10,15 @@ const result = spawnSync(
   { stdio: 'inherit' },
 );
 process.exitCode = result.status ?? 1;
+if (result.status === 0) {
+  const migrations = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(import.meta.resolve('typescript/bin/tsc')),
+      '-p',
+      'tsconfig.portable-tools.json',
+    ],
+    { stdio: 'inherit' },
+  );
+  process.exitCode = migrations.status ?? 1;
+}

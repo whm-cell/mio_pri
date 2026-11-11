@@ -1,23 +1,9 @@
-import { lstat, readFile } from 'node:fs/promises';
-import { beneath } from '../inventory.ts';
-import { documentCatalog, resolveDocument } from '../task-documents.ts';
-import { checkedPath, digest, json } from './records.ts';
+import { digest, json } from './records.ts';
 import type { Evidence } from './records.ts';
-
-export async function artifact(root: string, id: string, path: string): Promise<Buffer> {
-  // Raw evidence is isolated by task. Shared Markdown must first be retrieved by the operator.
-  if (
-    !beneath(path, `.work/tasks/${id}/evidence`) &&
-    !(path.startsWith('docs/') && path.endsWith('.md'))
-  )
-    throw new Error("WORK_ARTIFACT: use this task's evidence directory or a shared document");
-  if (path.startsWith('docs/tasks/')) resolveDocument(path, await documentCatalog(root));
-  const absolute = await checkedPath(root, path);
-  const stat = await lstat(absolute);
-  if (!stat.isFile() || stat.nlink !== 1)
-    throw new Error('WORK_ARTIFACT: original must be a regular file with no hard-link aliases');
-  return readFile(absolute);
-}
+import { artifact } from './original.ts';
+import { evidenceRef, observe } from './verification-proof.ts';
+import { captureEnvironment, environmentSnapshot } from './verification-environment.ts';
+export { artifact } from './original.ts';
 
 /** Select the complete check and later probes together, for assessment and delivery binding. */
 export async function automatedEvidence(
@@ -43,6 +29,22 @@ export async function automatedEvidence(
       continue;
     }
     try {
+      if (entry.artifact.endsWith('.verification.json')) {
+        const observation = await observe(root, evidenceRef(id, entry));
+        if (json(observation.command) !== json(command))
+          throw new Error('Receipt command mismatch');
+        if (
+          !observation.environmentSnapshot ||
+          json(await captureEnvironment(root, observation.environmentSnapshot.conditions)) !==
+            json(observation.environmentSnapshot)
+        )
+          throw new Error('Current environment differs from the verified receipt');
+        return {
+          result: observation.issues.length ? 'pending' : (newerIssue ?? 'pass'),
+          evidence: selected.toReversed(),
+          basis: observation.kind,
+        };
+      }
       // work run writes one pretty-printed JSON header before stdout/stderr.
       const source = bytes.toString('utf8');
       const header = JSON.parse(source.slice(0, source.indexOf('\n}\n') + 2));
@@ -53,11 +55,18 @@ export async function automatedEvidence(
         header.argv.some((arg: unknown) => typeof arg !== 'string')
       )
         throw new Error('Invalid automated observation header');
-      if (json(header.argv) === json(command))
+      if (json(header.argv) === json(command)) {
+        if (header.environmentSnapshot) {
+          const environment = environmentSnapshot(header.environmentSnapshot);
+          if (json(await captureEnvironment(root, environment.conditions)) !== json(environment))
+            throw new Error('Current environment differs from the execution');
+        }
         return {
           result: entry.result === 'pass' ? (newerIssue ?? 'pass') : entry.result,
           evidence: selected.toReversed(),
+          basis: 'execution',
         };
+      }
       if (entry.result !== 'pass') newerIssue ??= entry.result;
     } catch {
       newerIssue ??= 'invalid';

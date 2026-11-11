@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { capture, contractIssues } from './context.ts';
+import { assess, capture, contractIssues } from './context.ts';
 import { checkedPath, digest, json, member, parseTask, saveTask } from './records.ts';
 import type { Task } from './records.ts';
 import { bookPaths, readBook } from './reports.ts';
@@ -21,6 +21,7 @@ export async function handoff(root: string, task: Task) {
   const incomplete = contractIssues(task).filter((error) => error.startsWith('WORK_CONTRACT'));
   if (incomplete.length) throw new Error(incomplete.join('\n'));
   const plan = task.plan;
+  const assessment = await assess(root, task);
   const portable: Task = {
     version: 1,
     member: task.member,
@@ -51,9 +52,9 @@ export async function handoff(root: string, task: Task) {
       stopCondition: plan.stopCondition,
       sharedRef: plan.sharedRef,
     },
-    notes: task.evidence.map(
+    notes: assessment.evidence.map(
       (entry) =>
-        `Reported ${entry.criterion}: ${entry.result}; candidate ${entry.candidate}; raw evidence must be retrieved or the check rerun.`,
+        `Current ${entry.criterion}: ${entry.result}; basis ${'basis' in entry ? entry.basis : entry.method}; candidate ${current.candidate}; retrieve and reverify the complete original chain; acceptance does not transfer.`,
     ),
   };
   const path = await checkedPath(

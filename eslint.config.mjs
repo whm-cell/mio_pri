@@ -1,7 +1,17 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['node_modules/**', 'dist/**', 'coverage/**', '.runtime/**', '.work/**'] },
+  {
+    ignores: [
+      'node_modules/**',
+      'dist/**',
+      'compute/dist/**',
+      'contracts/compute/dist/**',
+      'coverage/**',
+      '.runtime/**',
+      '.work/**',
+    ],
+  },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],

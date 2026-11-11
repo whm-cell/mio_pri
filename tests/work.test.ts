@@ -457,6 +457,12 @@ it('rejects competing task writes before launching them while reads and another 
   await expect
     .poll(() => readFile(join(root, '.work/started'), 'utf8').catch(() => ''))
     .toBe('ready');
+  const inFlight = await readFile(statePath(root), 'utf8');
+  const start = (JSON.parse(inFlight) as Task).evidence.at(-1)!;
+  expect((JSON.parse(inFlight) as Task).evidence).toEqual([
+    ...(JSON.parse(before) as Task).evidence,
+    expect.objectContaining({ result: 'pending' }),
+  ]);
   const write = [
     process.execPath,
     '-e',
@@ -482,9 +488,9 @@ it('rejects competing task writes before launching them while reads and another 
   expect(invoke(root, ['deliver', 'probe', '--stdin'], { action: 'prepare' }).output).toContain(
     'WORK_BUSY',
   );
-  expect(await readFile(statePath(root), 'utf8')).toBe(before);
+  expect(await readFile(statePath(root), 'utf8')).toBe(inFlight);
   await expect(readFile(join(root, '.work/forbidden'))).rejects.toHaveProperty('code', 'ENOENT');
-  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(2);
   for (const args of [
     ['check', 'probe'],
     ['context', 'probe', 'resume'],
@@ -506,8 +512,15 @@ it('rejects competing task writes before launching them while reads and another 
   await writeFile(join(root, '.work/finish'), 'finish');
   const result = await running.finished;
   expect(result.status, result.output).toBe(0);
-  expect((await state(root)).evidence).toHaveLength(1);
-  expect((await state(root)).evidence[0]!.result).toBe('pass');
+  const settled = (await state(root)).evidence;
+  expect(settled).toHaveLength(1);
+  expect(settled[0]!.result).toBe('pass');
+  const log = await readFile(join(root, settled[0]!.artifact), 'utf8');
+  expect(JSON.parse(log.slice(0, log.indexOf('\n}\n') + 2)).start).toEqual({
+    artifact: start.artifact,
+    sha256: start.sha256,
+  });
+  expect(digest(await readFile(join(root, start.artifact)))).toBe(start.sha256);
   await expect(readFile(join(root, '.work/tasks/probe.command.json'))).rejects.toHaveProperty(
     'code',
     'ENOENT',
@@ -610,8 +623,13 @@ it.skipIf(process.platform === 'win32')(
         .output,
     ).toContain('WORK_BUSY');
     expect(await readFile(path, 'utf8')).toBe(marker);
-    expect((await state(root)).evidence).toHaveLength(0);
-    expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+    const evidence = (await state(root)).evidence;
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.result).toBe('pending');
+    const start = await readFile(join(root, evidence[0]!.artifact), 'utf8');
+    expect(digest(start)).toBe(evidence[0]!.sha256);
+    expect(await readFile(join(root, JSON.parse(start).rawLog), 'utf8')).toContain('"started"');
+    expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(2);
     expect(invoke(root, ['context', 'probe', 'resume']).status).toBe(0);
   },
 );
@@ -1649,6 +1667,8 @@ it('keeps sibling tasks independent and archives in place without deleting their
   await ready(root, 'second');
   const second = await readFile(statePath(root, 'second'), 'utf8');
   expect(run(root).status).toBe(0);
+  const originals = (await readdir(join(root, '.work/tasks/probe/evidence'))).sort();
+  expect(originals).toHaveLength(2);
   expect(
     invoke(root, ['archive', 'probe', 'Cancelled by the fixture user; preserve the result.'])
       .status,
@@ -1656,7 +1676,7 @@ it('keeps sibling tasks independent and archives in place without deleting their
   expect(invoke(root, ['check', 'probe']).output).toContain('WORK_ARCHIVED');
   expect(run(root).status).toBe(1);
   expect(await readFile(statePath(root, 'second'), 'utf8')).toBe(second);
-  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+  expect((await readdir(join(root, '.work/tasks/probe/evidence'))).sort()).toEqual(originals);
 });
 
 it('rejects private/traversal/symlink inputs, missing sources, and foreign workspace ownership', async () => {
@@ -1695,9 +1715,14 @@ it('does not overwrite state edited during a check and preserves the unbound raw
   const script =
     'const fs=require("node:fs");const p=".work/tasks/probe/state.json";const t=JSON.parse(fs.readFileSync(p));t.plan.nextAction="Concurrent author update";fs.writeFileSync(p,JSON.stringify(t));';
   expect(run(root, script).output).toContain('WORK_CONFLICT');
-  expect((await state(root)).plan.nextAction).toBe('Concurrent author update');
-  expect((await state(root)).evidence).toHaveLength(0);
-  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(1);
+  const task = await state(root);
+  expect(task.plan.nextAction).toBe('Concurrent author update');
+  expect(task.evidence).toHaveLength(1);
+  expect(task.evidence[0]!.result).toBe('pending');
+  const start = await readFile(join(root, task.evidence[0]!.artifact), 'utf8');
+  expect(digest(start)).toBe(task.evidence[0]!.sha256);
+  expect(await readFile(join(root, JSON.parse(start).rawLog), 'utf8')).toContain('"exitCode": 0');
+  expect(await readdir(join(root, '.work/tasks/probe/evidence'))).toHaveLength(2);
 });
 
 it('checks retrieved manual evidence and refuses release after its artifact is corrupted or missing', async () => {
@@ -1964,7 +1989,8 @@ it('receives a handoff into another member workspace only after retrieving match
   expect(received.plan.authorization).toBe('');
   expect(received.checkpoint).toBeNull();
   expect(received.evidence).toEqual([]);
-  expect(received.notes.join(' ')).toContain('Reported checks: pass');
+  expect(received.notes.join(' ')).toContain('Current checks: pass; basis execution');
+  expect(received.notes.join(' ')).toContain('acceptance does not transfer');
   expect(invoke(receiver, ['check', 'probe']).output).toContain('WORK_CONTRACT');
   expect(invoke(receiver, ['receive', '.work/inbox/probe.md']).status).toBe(1);
   await edit(receiver, (task) => {

@@ -25,6 +25,7 @@ import { readOptions } from './read-options.ts';
 import { readStatus } from './read-status.ts';
 import { assessmentOutput, inspectionOutput, readTask } from './read-task.ts';
 import { readPublicResult } from './public-read.ts';
+import { changeCommand } from './change-read.ts';
 import { bookPaths, readBook } from './reports.ts';
 import { runCommand, withTaskCommand } from './command.ts';
 import { verify } from './verification.ts';
@@ -58,6 +59,8 @@ Agent operates this CLI; the user supplies goals and decisions.
   read <task> <task|check> [pointer]     page selected record fields or current checks
   read <task> evidence <index>          page one ledger-bound original (UTF-8 text)
   read-result <prd> [key] [read options] page a public result without personal records
+  changes <prd> [key] [read options]     page change summaries or one card
+  changes <prd> --write-index            regenerate that PRD's change index
   check <task>                          read-only context/evidence assessment
   sync <task> <reason>                  acknowledge inspected changes; retain evidence
   run <task> <criterion> [-- <argv ...>] capture the declared check or a supplemental probe
@@ -189,6 +192,7 @@ async function main(activity?: CommandActivity) {
     );
   }
   if (command === 'read-result') return console.log(json(await readPublicResult(root, args)));
+  if (command === 'changes') return console.log(json(await changeCommand(root, args)));
   const actor = await member(root);
   if (command === 'start') {
     if (args.length < 2) throw new Error(help);

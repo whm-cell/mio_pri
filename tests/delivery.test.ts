@@ -179,9 +179,17 @@ async function passing(root: string, id = 'probe') {
     environment: 'isolated fixture',
   });
   if (task.plan.norms) {
+    const catalog = await documentCatalog(root);
     const sourcePath = task.plan.result
-      ? resolveDocument(task.plan.result.prd, await documentCatalog(root)).currentPath
+      ? resolveDocument(task.plan.result.prd, catalog).currentPath
       : undefined;
+    const requirements = new Set([
+      ...(sourcePath ? [sourcePath] : []),
+      ...task.plan.sources
+        .map((source) => resolveDocument(source, catalog))
+        .filter((source) => source.kind !== undefined)
+        .map((source) => source.currentPath),
+    ]);
     const report = `# Fixture norms review\n\n\`\`\`mio-norms-review\n${json({
       candidate: task.checkpoint.candidate,
       reviewer: 'isolated fixture reviewer',
@@ -193,15 +201,11 @@ async function passing(root: string, id = 'probe') {
               result: 'pass',
               assessment:
                 'Fixture PRD is the declared capability source; there is no separate design.',
-              documents: sourcePath
-                ? [
-                    {
-                      path: sourcePath,
-                      sha256: task.checkpoint!.files[sourcePath],
-                      assessment: 'Synthetic fixture capability covers this PRD.',
-                    },
-                  ]
-                : [],
+              documents: [...requirements].map((path) => ({
+                path,
+                sha256: task.checkpoint!.files[path],
+                assessment: 'Synthetic fixture capability covers this source.',
+              })),
             },
             accepted: {
               result: 'pass',
@@ -592,6 +596,83 @@ it('adds siblings and replaces only a newly accepted key without requiring a com
   expect(updated.results.find((entry) => entry.key === 'alpha')!.outcomes).toBe(request.outcomes);
   expect((await results(root)).results).toHaveLength(2);
   expect(spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root }).status).not.toBe(0);
+});
+
+it('keeps failed repairs and later accepted repairs on one change key while preserving a new issue', async () => {
+  const root = await fixture();
+  const change = 'docs/tasks/product/changes/bug/change.md';
+  const other = 'docs/tasks/product/changes/new-issue/change.md';
+  const content = (title: string) =>
+    `# ${title}\n\n\`\`\`mio-change\n{"version":1,"type":"fix","section":"Capability PRD"}\n\`\`\`\n`;
+  for (const path of [change, other]) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content(path === change ? 'Repair bug' : 'New issue'));
+  }
+  await writeTaskDocuments(root, [
+    { kind: 'prd', identity: prd, path: prd },
+    { kind: 'prd', identity: otherPrd, path: otherPrd },
+    { kind: 'change', identity: change, path: change },
+    { kind: 'change', identity: other, path: other },
+  ]);
+  await setup(root, 'new-issue');
+  await finish(root, 'new-issue');
+  const sibling = (await results(root)).results.find((entry) => entry.key === 'new-issue');
+
+  await setup(root, 'bug');
+  const initial = await loadTask(root, 'bug');
+  initial.task.plan.sources.push(change);
+  initial.task.checkpoint = await capture(root, initial.task);
+  await saveTask(root, initial.task, initial.raw);
+  await passing(root, 'bug');
+  const failed = invoke(root, [
+    'run',
+    'bug',
+    'checks',
+    '--',
+    process.execPath,
+    '-e',
+    'process.exit(1)',
+  ]);
+  expect(failed.status).toBe(1);
+  expect((await loadTask(root, 'bug')).task.evidence.at(-1)!.result).toBe('fail');
+  await expect(prepare(root, 'bug')).rejects.toThrow();
+  await writeFile(join(root, change), content('Repair bug after failed verification'));
+  expect(invoke(root, ['sync', 'bug', 'Reviewed the failed candidate and repair']).status).toBe(0);
+  const afterRepair = (await assess(root, (await loadTask(root, 'bug')).task)).evidence;
+  expect(afterRepair.find((entry) => entry.criterion === 'checks')!.result).not.toBe('pass');
+  await passing(root, 'bug');
+  await finish(root, 'bug');
+  const accepted = (await results(root)).results.find((entry) => entry.key === 'bug')!;
+
+  const loaded = await loadTask(root, 'bug');
+  await updateTask(
+    root,
+    'bug',
+    json({
+      revision: digest(loaded.raw),
+      reason: 'Fixture user requests another repair',
+      reopen: true,
+      plan: { authorization: 'Repair the same issue.', nextAction: 'Verify the new candidate.' },
+    }),
+  );
+  await writeFile(join(root, change), content('Repair bug after first acceptance'));
+  expect(invoke(root, ['sync', 'bug', 'Reviewed the new repair candidate']).status).toBe(0);
+  expect((await results(root)).results.find((entry) => entry.key === 'bug')).toEqual(accepted);
+  expect(
+    (await assess(root, (await loadTask(root, 'bug')).task)).evidence.find(
+      (entry) => entry.criterion === 'checks',
+    )!.result,
+  ).not.toBe('pass');
+  await expect(prepare(root, 'bug')).rejects.toThrow();
+  await passing(root, 'bug');
+  const draft = { ...(await prepareRequest(root, 'bug')), outcomes: 'Accepted later repair.' };
+  await deliver(root, 'bug', json(draft));
+  expect((await results(root)).results.find((entry) => entry.key === 'bug')).toEqual(accepted);
+  await deliver(root, 'bug', json(await completeRequest(root, 'bug')));
+  const updated = (await results(root)).results;
+  expect(updated.find((entry) => entry.key === 'bug')!.outcomes).toBe(draft.outcomes);
+  expect(updated.find((entry) => entry.key === 'new-issue')).toEqual(sibling);
+  expect(updated).toHaveLength(2);
 });
 
 it('keeps maintenance local and archives without creating public results', async () => {

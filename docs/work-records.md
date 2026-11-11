@@ -2,19 +2,20 @@
 
 本页是 Agent 的工具接口，用户无需手动执行这些命令或编辑 JSON。Agent 先 `pnpm work guide <action>`；已有任务用 `pnpm work context <task> <action>`。动作是 start、resume、implement、verify、deliver、handoff、archive。只展开当前动作，不通读本页；判断协议见 [协调索引](coordination.md)。
 
-| 用途                   | 命令                                     |
-| ---------------------- | ---------------------------------------- |
-| 无个人记录时读取操作   | `work guide <action>`                    |
-| 当前任务摘要与操作     | `work context <task> <action>`           |
-| 自动初始化／建档／复用 | `work ensure --stdin`                    |
-| 结构化更新             | `work update <task> --stdin`             |
-| 列表／核对／同步       | `work status`、`work check`、`work sync` |
-| 资料分类／迁移核对     | `work documents`                         |
-| 命令型实施             | `work exec <task> -- <argv ...>`         |
-| 验证取证               | `work run`、`work evidence`              |
-| 最终交付               | `work deliver <task> --stdin`            |
-| 交接                   | `work handoff`、`work receive`           |
-| 原地保留历史           | `work archive`                           |
+| 用途                   | 命令                                         |
+| ---------------------- | -------------------------------------------- |
+| 无个人记录时读取操作   | `work guide <action>`                        |
+| 当前任务摘要与操作     | `work context <task> <action>`               |
+| 自动初始化／建档／复用 | `work ensure --stdin`                        |
+| 轻量变更读取／生成索引 | `work changes <prd> [key]` / `--write-index` |
+| 结构化更新             | `work update <task> --stdin`                 |
+| 列表／核对／同步       | `work status`、`work check`、`work sync`     |
+| 资料分类／迁移核对     | `work documents`                             |
+| 命令型实施             | `work exec <task> -- <argv ...>`             |
+| 验证取证               | `work run`、`work evidence`                  |
+| 最终交付               | `work deliver <task> --stdin`                |
+| 交接                   | `work handoff`、`work receive`               |
+| 原地保留历史           | `work archive`                               |
 
 以下均由 Agent 在仓库根使用 `pnpm work` 调用，JSON 经 stdin 输入，输出供 Agent 继续判断。工具不读取私人 Skill 目录；操作只在调用时发生，不常驻调度。旧 `init <member>`／`start <task> <goal> [source.md...]` 保留兼容，普通新任务使用 ensure。下文 api-probe 表示工具返回的实际 task ID。
 
@@ -92,6 +93,8 @@ context、ensure 和成功 update 都返回完整现场核验的有界视图。�
 命令前后记录的文件身份、大小及修改/变更时间依赖实际文件系统的元数据精度；内容摘要只比较观察时的字节。低时间精度文件系统可能无法观察同一时间粒度内等长修改后恢复原字节，记录不是任意瞬时物理写入的审计。执行期间仍须维持单写入者、停止修改受验输入并核对命令原件和候选；发现并发变化或无法满足所需证据时如实保留缺口。
 
 `read-result <prd> [key]` 不需要作者 `.work`：无 key 时分页列成果，有 key 时默认读取 /summary，--select /result 读取完整简洁记录。只支持公共 v5；不存在 artifacts 或逐证据读取入口。输出仍有界，工具不能阻止宿主直接全文读文件。
+
+`changes <prd>` 分页列该 PRD 的变更摘要，`changes <prd> <key>` 默认分页读取所选正文；两者支持相同 `--select`、`--offset`、`--limit`、`--hash`，续页内容变化时拒绝混读。`changes <prd> --write-index` 只生成所属 PRD 固定的 `changes/index.md`，内容相同不重写；无已登记变更时拒绝创建。该模式按[实施与协作](coordination.md#实施与协作)经 `work exec` 调用。缺失或过期索引由公共文档检查报告，但不阻塞生成器；正文格式、所有权及父章节错误必须先修复。读取不改变候选的完整文件绑定。
 
 事实变化时，Agent 用 `pnpm work update api-probe --stdin` 提交，例如：
 
@@ -271,7 +274,7 @@ pnpm work evidence api-probe quality-review pending .work/tasks/api-probe/eviden
 }
 ```
 
-requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 中已注册的 prd/design/proposal 实际页，去重后用 currentPath，而非迁移 alias；不能靠原件添加未声明来源。没有任务资料注册的旧仓库／fixture，sources 中除 norms.paths、已知导航和成果存档外的声明页也按来源核对。维护规范章节可同时作为需求来源，其余普通规范和纯导航不重复填写。requirements.assessment 要说明要求及方案关系；无独立设计不需造文件。无规范影响时 documents 为 []，仍核对 reason；无相关接受时 accepted.results 为 []，assessment 写真实理由，不虚构成果。
+requirements.documents 必须覆盖 requirement.source、result.prd 及 sources 中已注册的 prd/design/proposal/change 实际页，去重后用 currentPath，而非迁移 alias；不能靠原件添加未声明来源。没有任务资料注册的旧仓库／fixture，sources 中除 norms.paths、已知导航和成果存档外的声明页也按来源核对。维护规范章节可同时作为需求来源，其余普通规范和纯导航不重复填写。requirements.assessment 要说明要求及方案关系；无独立设计不需造文件。无规范影响时 documents 为 []，仍核对 reason；无相关接受时 accepted.results 为 []，assessment 写真实理由，不虚构成果。
 
 需求、各规范页和 accepted 的 result 只能是 pass/fail/pending，总体按 fail 优先、其次 pending、全部通过才 pass 推导，并须与 conclusion 及 evidence 命令参数相同。缺三方项、缺来源／规范页、不匹配候选、声明或页面摘要、空观察均拒绝。accepted 中 PRD/key/候选仅检查结构，不认证成果存在或接受真实；实际依赖另用 inputs 绑定，不能把原件当作实时镜像。旧声明和原件读取兼容；旧 norms 声明用于新登记前，须显式 update 到 v2、核对变化并 sync，旧通过不转移；已为 v2 的声明无需重复升级。
 

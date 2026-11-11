@@ -23,6 +23,10 @@
 
 每份 PRD 目录的 `documents.json` 是该目录任务资料的唯一身份与位置注册，格式为 `{"version":1,"documents":[...]}`，条目沿用 identity、kind、path 与可选 aliases。每份登记恰有一个同目录 `prd.md`，design/proposal 必须归属该 PRD，pending 中只登记 proposal；全仓身份、正文和别名不得重复。identity 是保持稳定的标识，可沿用历史公共路径而不保留同名文件；path 指向真实正文，导航直接使用该路径。identity 不得占用仍存在的其他规范文件路径。aliases 仅在仍需兼容旧链接时声明真实短跳转页，核对引用后可移除，不为稳定身份永久保留中转页。
 
+已有 PRD 内不需另立 PRD 的修复、需求调整或小功能，在首次真实变更时使用 `changes/<id>/change.md`，并在父 PRD 的 `documents.json` 以 `kind: "change"` 登记。ID 是小写字母、数字、连字符或下划线组成的稳定键，来自登记的 `docs/tasks/<名称>/changes/<id>/change.md` 形状的 identity；当前 path 的 ID 必须一致。父 PRD 目录迁移时可保留旧 identity 和必要的短跳转 alias，不能通过移动正文静默改 ID。同一逻辑问题后续修复沿用 ID，独立新问题使用新 ID。正文保留问题／目标、范围与必要方案、验收、实际规范和旧成果引用，修枝为当前方案；只有确有需要才在同目录登记独立 design。未发生变更的 PRD 不预建目录。
+
+每项正文有唯一一级标题，以及唯一的 `mio-change` JSON 块，例如 `{"version":1,"type":"fix","section":"父 PRD 中真实且唯一的标题"}`；type 也可取 `adjustment` 或 `feature`。父 PRD 和 ID 由登记确定，不在正文重复维护。首次变更时父 PRD 链接 `changes/index.md`；索引由 `pnpm work changes <prd> --write-index` 从登记正文生成，只列 ID、类型、标题、父章节和详情，按 ID 排序，不保存进度或作为需求来源。正文、索引和更新流程见[关联并建立当前记录](coordination.md#关联并建立当前记录)。
+
 `docs/tasks/index.md` 是静态入口，通过实际任务目录发现已登记资料和成果；新增 PRD 不改中央工程配置或总入口。`pnpm work documents` 按需列资料、登记来源和成果入口并全量校验，不自动迁移或更新接受。公共规范维护行为、边界和共同规则；开发波次、待验状态与真实接受从对应 PRD／成果读取，不在公共规范重复维护。
 
 已接受成果保存在本 PRD 的 `complete/records.json`，`complete/report.md` 只生成简短导航并绑定记录内容哈希。complete 仅写这两个所属 PRD 文件；资料与成果读取从登记的 PRD 定位，不依赖全局成果元数据。公共 v5 记录保存成果键、名称、完成范围、实现/契约入口、验证摘要、限制及接受来源；候选标识仅关联接受事实，不提供代码复原。文件清单、详细证据和开发快照不复制进公共成果。成果数量不表示整份 PRD 完成，PRD、设计和规范不随完成状态搬家；跨 PRD 默认引用实际权威页，只有明确需求变化才改对应需求。

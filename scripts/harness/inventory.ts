@@ -9,7 +9,7 @@ export type { HarnessConfig } from './source-config.ts';
 
 export interface TaskDocument {
   identity: string;
-  kind: 'prd' | 'design' | 'proposal';
+  kind: 'prd' | 'design' | 'proposal' | 'change';
   path: string;
   aliases?: string[];
 }

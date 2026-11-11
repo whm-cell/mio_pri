@@ -8,6 +8,7 @@ import { headingAnchors, markdownLinks, parseMarkdown } from './markdown.ts';
 import type { MarkdownNode } from './markdown.ts';
 import { checkApiDocuments } from './check-api-documents.ts';
 import { inspectTaskDocuments, resultDocument, taskNavigation } from './task-documents.ts';
+import { changeIndex, changeIndexPath, readChanges, renderChangeIndex } from './task-changes.ts';
 
 /** CommonMark paths/privacy for all documents; current anchors/discovery only for active pages. */
 export async function checkDocuments(
@@ -100,11 +101,34 @@ export async function checkDocuments(
       file.startsWith('docs/tasks/') &&
       !taskNavigation(file) &&
       !resultDocument(file) &&
+      !changeIndex(file) &&
       !classified.has(file)
     )
       errors.push(`TASK_DOCUMENT_UNCLASSIFIED ${file}`);
   if (registry.documents.length && !documents.has('docs/tasks/index.md'))
     errors.push('TASK_DOCUMENT_ENTRY_MISSING docs/tasks/index.md');
+  for (const file of documents.keys())
+    if (
+      changeIndex(file) &&
+      !registry.documents.some(
+        (entry) => entry.kind === 'prd' && changeIndexPath(entry.path) === file,
+      )
+    )
+      errors.push(`TASK_CHANGE_INDEX_OWNER ${file}`);
+  if (!registry.errors.length) {
+    for (const prd of registry.documents.filter((entry) => entry.kind === 'prd')) {
+      const changes = await readChanges(root, registry.documents, prd.path);
+      const index = changeIndexPath(prd.path);
+      if (!changes.length) {
+        if (documents.has(index)) errors.push(`TASK_CHANGE_INDEX_EMPTY ${index}`);
+        continue;
+      }
+      if (!documents.has(index)) errors.push(`TASK_CHANGE_INDEX_MISSING ${index}`);
+      else if ((await readFile(join(root, index), 'utf8')) !== (await renderChangeIndex(changes)))
+        errors.push(`TASK_CHANGE_INDEX_STALE ${index}`);
+      if (!edges.get(prd.path)?.includes(index)) errors.push(`TASK_CHANGE_INDEX_LINK ${prd.path}`);
+    }
+  }
   errors.push(...checkApiDocuments(documents, edges));
   const index = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
   const indexChecked = index.status === 0;

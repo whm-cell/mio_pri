@@ -6,6 +6,7 @@ import { markdownLinks, nodeText, parseMarkdown } from './markdown.ts';
 import type { MarkdownNode } from './markdown.ts';
 import { checkedPath } from './work/records.ts';
 import { prdDirectory } from './work/compact-store.ts';
+import { readChanges } from './task-changes.ts';
 
 export const resultDocument = (path: string) =>
   /^docs\/tasks\/[a-z0-9][a-z0-9_-]*\/complete\//.test(path);
@@ -31,7 +32,7 @@ function documentShape(value: unknown): TaskDocument {
     Object.keys(entry).some((key) => !['identity', 'kind', 'path', 'aliases'].includes(key)) ||
     typeof entry.identity !== 'string' ||
     typeof entry.path !== 'string' ||
-    !['prd', 'design', 'proposal'].includes(entry.kind) ||
+    !['prd', 'design', 'proposal', 'change'].includes(entry.kind) ||
     (entry.aliases !== undefined &&
       (!Array.isArray(entry.aliases) || entry.aliases.some((path) => typeof path !== 'string')))
   )
@@ -182,6 +183,31 @@ export async function inspectTaskDocuments(root: string, config: HarnessConfig) 
       errors.push(
         `TASK_DOCUMENT_OWNER: ${entry.path}: require its PRD directory and classify pending as proposal`,
       );
+    if (beneath(entry.path, `${directory}/changes`)) {
+      const match =
+        /^docs\/tasks\/[a-z0-9][a-z0-9_-]*\/changes\/([a-z0-9][a-z0-9_-]{0,79})\/design\.md$/.exec(
+          entry.path,
+        );
+      if (
+        entry.kind !== 'change' &&
+        !(
+          entry.kind === 'design' &&
+          match &&
+          documents.some(
+            (item) =>
+              item.kind === 'change' && item.path === `${directory}/changes/${match[1]}/change.md`,
+          )
+        )
+      )
+        errors.push(`TASK_CHANGE_OWNER: ${entry.path}`);
+    } else if (entry.kind === 'change') errors.push(`TASK_CHANGE_LOCATION: ${entry.path}`);
+  }
+  for (const parent of documents.filter((entry) => entry.kind === 'prd')) {
+    try {
+      await readChanges(root, documents, parent.path);
+    } catch (error) {
+      errors.push(`TASK_CHANGE_INVALID: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
   for (const entry of documents) {
     for (const alias of entry.aliases ?? []) {

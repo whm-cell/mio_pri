@@ -56,7 +56,7 @@ export async function capture(root: string, task: Task): Promise<Checkpoint> {
       if (path !== '.') await checkedPath(root, path);
       if (
         [...config.privateRoots, ...config.generatedRoots].some((base) => beneath(path, base)) ||
-        path.split('/').some((part) => /^\.env(?:\.|$)/.test(part))
+        (path !== '.env.example' && path.split('/').some((part) => /^\.env(?:\.|$)/.test(part)))
       )
         throw new Error(`WORK_PRIVATE: ${path}`);
       const matches = scan.files.filter((file) => path === '.' || beneath(file, path));

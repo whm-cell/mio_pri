@@ -46,7 +46,7 @@ export async function checkDocuments(
       if (
         local.startsWith('../') ||
         config.privateRoots.some((base) => beneath(local, base)) ||
-        /(?:^|\/)\.env(?:\.|$)/.test(local)
+        (local !== '.env.example' && /(?:^|\/)\.env(?:\.|$)/.test(local))
       ) {
         errors.push(`LINK_PRIVATE ${file}: ${url}`);
         continue;
@@ -54,7 +54,11 @@ export async function checkDocuments(
       try {
         await access(path);
         local = relative(root, await realpath(path)).replaceAll('\\', '/');
-        if (local.startsWith('../') || config.privateRoots.some((base) => beneath(local, base))) {
+        if (
+          local.startsWith('../') ||
+          config.privateRoots.some((base) => beneath(local, base)) ||
+          (local !== '.env.example' && /(?:^|\/)\.env(?:\.|$)/.test(local))
+        ) {
           errors.push(`LINK_PRIVATE ${file}: ${url}`);
           continue;
         }

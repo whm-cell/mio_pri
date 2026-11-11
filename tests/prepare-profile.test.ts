@@ -19,9 +19,24 @@ async function fixture() {
   await writeFile(join(plugin, 'dist/plugin.js'), 'export {};\n');
   return { directory, plugin };
 }
-function run(cwd: string, args: string[] = []) {
-  return spawnSync(process.execPath, [entry, ...args], { cwd, encoding: 'utf8', timeout: 30000 });
+function run(cwd: string, args: string[] = [], env = process.env) {
+  return spawnSync(process.execPath, [entry, ...args], {
+    cwd,
+    env,
+    encoding: 'utf8',
+    timeout: 30000,
+  });
 }
+
+it('uses the selected environment home instead of mixing profiles in the default directory', async () => {
+  const { directory, plugin } = await fixture();
+  const home = join(directory, 'test-home');
+  expect(run(plugin, [], { ...process.env, DSH_HOME: home }).status).toBe(0);
+  expect(await realpath(join(home, 'profiles/mio/node_modules/@mio/plugin'))).toBe(
+    await realpath(plugin),
+  );
+  await expect(readFile(join(plugin, '.runtime/dsh/profiles/mio/package.json'))).rejects.toThrow();
+});
 
 it('retains the original no-argument profile location', async () => {
   const { plugin } = await fixture();

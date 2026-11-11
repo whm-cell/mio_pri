@@ -14,6 +14,8 @@ Redis 驱动包的生产导入只允许 `src/integrations/redis.ts`；开发工�
 
 已登记的 TS 文件还必须进入类型检查配置；生产 TS 必须同时进入构建配置。新增根目录仅登记归属不足以通过，检查器会对账编译器实际匹配的文件集合。
 
+私有 `.env` / `.env.*` 不进入源码清单或任务候选。唯一例外是仓库根的公开 `.env.example`：须在 `configurationFiles` 登记，参与候选摘要，且不能是符号链接；模板只放占位值，真实秘密留在忽略的私有文件。
+
 多项目使用 `harness.config.json` 的 `projects` 具名对象：每项声明 `kind`（`service` 或 `contract`）、`packageRoot`、`sources`、`typecheck` 和 `build`。根服务的 `packageRoot` 为 `.`，且现有 `src` 只能归属根服务；其他生产根须在 `sourceRoots` 中登记并唯一分配给一个项目。项目的配置路径各自独立，源码根不得重叠，也不得与生成或私有排除路径重叠；未知 role、重复 JSON 键、越界路径及未声明的生成目录显式失败。未配置 `projects` 时仅支持现有 `src` 单生产根，不因出现第二个目录自动推断项目。
 
 每项 `typecheck` 和 `build` 指向本项目真实 TypeScript 配置；对应生产文件须进入各自配置的文件集合，其他项目生产文件不得作为其显式编译根文件，本项目测试仍可进入类型检查。构建还须能生成运行代码、使用已登记的生成目录。生产导入按类型和构建两套配置解析，避免两者别名指向不同内部模块。此处核对配置与输入，不执行编译或证明产物存在；根入口仍须实际执行每个项目的类型检查和构建，并单独验证产物。
@@ -25,6 +27,8 @@ Redis 驱动包的生产导入只允许 `src/integrations/redis.ts`；开发工�
 非根服务可通过 `capabilities` 对 `fs`、`child_process`、`sqlite` 分别登记本项目内真实存在的精确 TS adapter 文件；`node:` 前缀及 `fs/promises` 按对应能力核对，根服务仍不开放这些能力。直接的 `process.getBuiltinModule(...)` 和 `globalThis.process` 的静态属性/字符串下标形式也受检查：目标须为字面量，脱离调用的引用拒绝。计算属性、任意别名、第三方内部行为和运行时反射不在承诺内，静态规则不是进程沙箱。
 
 `packageAdapters` 可按服务的真实 adapter 文件精确登记 `amqplib`，并允许非根服务登记 `cos-nodejs-sdk-v5`；未知包键、跨项目和不存在的文件拒绝。A 的 COS SDK 仍只允许 `src/integrations/cos.ts`，声明不覆盖 DSH、认证、PG 或 Redis 等既有边界。包名、类型包身份及解析目标的包归属共同参与核对。P2 增加这项声明是因为 B 使用独立凭据访问 COS、A/B 都可能需要各自的 MQ adapter；逐服务在检查器源码中硬编码路径会把正常新增服务变成护栏实现修改。代价是维护显式声明与正反例，不能据此推断运行时隔离。
+
+常驻环境的 MQ 初始化工具通过 `developmentDependencies` 精确声明复用 `src/integrations/rabbitmq.ts` 的连接/关闭能力，验证 A/B 登录；不发布或消费业务消息。服务工具仍不能直接导入 amqplib，生产代码不依赖部署工具，拓扑声明留在 `scripts/service/`。
 
 精确的 `@earendil-works/pi-ai`（含 `/models`、`/api/*` 公开子路径）属于同一 DSH 适配边界，按导入名、解析 packageId 与真实包归属识别，不放宽其他 npm 包。conversations/providers 不能反向导入本地 src/dsh。合法适配、临近非法目录、普通业务、type-only 别名及本地越界在同一 guardrail fixture 验证。
 

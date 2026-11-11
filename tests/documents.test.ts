@@ -76,6 +76,32 @@ it('rejects missing active anchors, undiscoverable pages and an undiscoverable e
   expect(await errors(root)).toContain('DOCUMENT_UNREACHABLE docs/index.md');
 });
 
+it('allows the public root env template link but rejects private env links and template aliases', async () => {
+  const root = await fixture({
+    '.env.example': 'EXAMPLE=value\n',
+    '.env': 'PRIVATE=value\n',
+    '.env.test': 'PRIVATE=test\n',
+    'docs/.env.example': 'PRIVATE=nested\n',
+    'README.md': '[资料](docs/index.md) [模板](.env.example)\n',
+  });
+  expect(await errors(root)).toEqual([]);
+  await writeFile(
+    join(root, 'README.md'),
+    '[资料](docs/index.md) [dev](.env) [test](.env.test) [nested](docs/.env.example)\n',
+  );
+  expect(await errors(root)).toEqual(
+    expect.arrayContaining([
+      'LINK_PRIVATE README.md: .env',
+      'LINK_PRIVATE README.md: .env.test',
+      'LINK_PRIVATE README.md: docs/.env.example',
+    ]),
+  );
+  await writeFile(join(root, 'README.md'), '[资料](docs/index.md) [模板](.env.example)\n');
+  await rm(join(root, '.env.example'));
+  await symlink(join(root, '.env'), join(root, '.env.example'));
+  expect(await errors(root)).toContain('LINK_PRIVATE README.md: .env.example');
+});
+
 it('recognizes real compatibility anchors without accepting tags inside HTML comments or scripts', async () => {
   const root = await fixture({
     'docs/index.md': '[API](apis/index.md) [Guide](guide.md#real-anchor)\n',

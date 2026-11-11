@@ -2,13 +2,12 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import {
-  COMMAND_EXCHANGE,
-  COMMAND_QUEUE,
-  COMMAND_ROUTING_KEY,
-  RESULT_EXCHANGE,
-  RESULT_QUEUE,
-  RESULT_ROUTING_KEY,
-} from '@mio/compute-contracts';
+  computeCapacity,
+  computeExchanges as exchanges,
+  computeQueues as queues,
+  computePermissions,
+  computeTopology,
+} from './compute-broker-topology.ts';
 
 type Json = Record<string, unknown>;
 type Reply = { status: number; value: unknown };
@@ -42,10 +41,6 @@ function object(value: unknown): Json {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('BROKER_RESPONSE_INVALID');
   return value as Json;
-}
-
-function exact(name: string): string {
-  return `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 }
 
 async function privateFile(path: string, contents: string): Promise<void> {
@@ -88,18 +83,6 @@ const roles: Record<'a' | 'b', Role> = {
   b: { user: `mio-b-${token}`, password: randomBytes(32).toString('base64url') },
 };
 const vhosts = [originalVhost, `mio-worker-test-${token}`, `mio-env-probe-${token}`] as const;
-const exchanges = [
-  COMMAND_EXCHANGE,
-  RESULT_EXCHANGE,
-  'mio.compute.commands.dlx.v1',
-  'mio.compute.results.dlx.v1',
-] as const;
-const queues = [
-  COMMAND_QUEUE,
-  RESULT_QUEUE,
-  'mio.compute.commands.dlq.v1',
-  'mio.compute.results.dlq.v1',
-] as const;
 const encoded = (value: string) => encodeURIComponent(value);
 
 async function api(method: string, path: string, body?: Json): Promise<Reply> {
@@ -200,53 +183,14 @@ try {
     await mutate('PUT', `vhosts/${encoded(vhost)}`, {});
     await mutate('PUT', `operator-policies/${encoded(vhost)}/mio-capacity`, {
       pattern: '.*',
-      definition: { 'max-length-bytes': 1073741824, overflow: 'reject-publish' },
+      definition: computeCapacity,
       priority: 0,
       'apply-to': 'queues',
     });
   }
-  for (const vhost of vhosts) {
-    const scope = encoded(vhost);
-    for (const exchange of exchanges)
-      await mutate('PUT', `exchanges/${scope}/${encoded(exchange)}`, {
-        type: 'direct',
-        durable: true,
-        auto_delete: false,
-        internal: false,
-        arguments: {},
-      });
-    for (const queue of queues) {
-      const arguments_: Json = {
-        'x-queue-type': 'quorum',
-        'x-delivery-limit': -1,
-        'x-overflow': 'reject-publish',
-      };
-      if (queue === COMMAND_QUEUE || queue === RESULT_QUEUE) {
-        const command = queue === COMMAND_QUEUE;
-        arguments_['x-dead-letter-exchange'] = command ? exchanges[2] : exchanges[3];
-        arguments_['x-dead-letter-routing-key'] = command
-          ? 'transcode.dead.v1'
-          : 'transcode.result.dead.v1';
-        arguments_['x-dead-letter-strategy'] = 'at-least-once';
-      }
-      await mutate('PUT', `queues/${scope}/${encoded(queue)}`, {
-        durable: true,
-        auto_delete: false,
-        arguments: arguments_,
-      });
-    }
-    const bindings = [
-      [exchanges[0], queues[0], COMMAND_ROUTING_KEY],
-      [exchanges[1], queues[1], RESULT_ROUTING_KEY],
-      [exchanges[2], queues[2], 'transcode.dead.v1'],
-      [exchanges[3], queues[3], 'transcode.result.dead.v1'],
-    ] as const;
-    for (const [exchange, queue, routing] of bindings)
-      await mutate('POST', `bindings/${scope}/e/${encoded(exchange)}/q/${encoded(queue)}`, {
-        routing_key: routing,
-        arguments: {},
-      });
-  }
+  for (const vhost of vhosts)
+    for (const resource of computeTopology(vhost))
+      await mutate(resource.method, resource.path, resource.body);
   for (const role of ['a', 'b'] as const) {
     const identity = roles[role];
     await mutate('PUT', `users/${encoded(identity.user)}`, {
@@ -254,11 +198,11 @@ try {
       tags: '',
     });
     for (const vhost of vhosts)
-      await mutate('PUT', `permissions/${encoded(vhost)}/${encoded(identity.user)}`, {
-        configure: '^$',
-        write: exact(role === 'a' ? COMMAND_EXCHANGE : RESULT_EXCHANGE),
-        read: exact(role === 'a' ? RESULT_QUEUE : COMMAND_QUEUE),
-      });
+      await mutate(
+        'PUT',
+        `permissions/${encoded(vhost)}/${encoded(identity.user)}`,
+        computePermissions(role),
+      );
   }
   for (const role of ['a', 'b'] as const) {
     const user = object((await api('GET', `users/${encoded(roles[role].user)}`)).value);
@@ -270,8 +214,8 @@ try {
       if (
         result.status !== 200 ||
         p.configure !== '^$' ||
-        p.write !== exact(role === 'a' ? COMMAND_EXCHANGE : RESULT_EXCHANGE) ||
-        p.read !== exact(role === 'a' ? RESULT_QUEUE : COMMAND_QUEUE)
+        p.write !== computePermissions(role).write ||
+        p.read !== computePermissions(role).read
       )
         throw new Error('BROKER_RUNTIME_PERMISSION_MISMATCH');
     }

@@ -11,6 +11,7 @@
 | 对话配置、接收与恢复     | [本地对话服务](conversations.md)  | 启用本地对话、迁移元数据或核对恢复语义时      |
 | 用户万联凭据与模型目录   | [供应商配置](providers.md)        | 启用 Key 加密、显式迁移、模型偏好或目录发现时 |
 | 基础设施与外部依赖使用   | [集成契约](integrations/index.md) | 使用或改变存储、执行工具、模型及供应商接入时  |
+| 本机开发与人工测试部署   | [常驻环境](local-environments.md) | 配置两套 Docker 中间件、启动应用或执行迁移时  |
 | 已接受开发结果           | [PRD 成果索引](tasks/index.md)    | 定位所属 PRD，再读取所需 key 的详情和证据     |
 | 动作与生命周期           | [协调协议](coordination.md)       | guide/context 返回当前动作                    |
 | 命令与字段               | [记录索引](work-records.md)       | 需要操作或格式排查时                          |

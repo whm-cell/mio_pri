@@ -53,21 +53,30 @@ pnpm check
 
 ## 本地运行
 
+开发与人工测试使用两套常驻持久化 Docker PostgreSQL 18.6 / Redis 8.2.11 / RabbitMQ 4.4.0。私有 `.env`、`.env.test` 由初始化命令分别生成，已有秘密保留；数据、密钥、Profile、会话和 Worker 目录按环境隔离。完整配置、恢复及自动化回归隔离见[常驻环境](docs/local-environments.md)。
+
 ```sh
+pnpm env:init
+pnpm infra:up:dev
+pnpm infra:up:test
 pnpm build
-pnpm profile:prepare
-export MIO_API_TOKEN="$(node -p 'require("node:crypto").randomBytes(32).toString("hex")')"
-pnpm start
+pnpm broker:init:dev
+pnpm broker:init:test
+pnpm migrate:dev --apply
+pnpm migrate:test --apply
+# 分别在两个终端运行；pnpm start 默认为开发。
+pnpm start:dev
+pnpm start:test
 ```
 
-在同一受信任终端验证：
+开发入口 `http://localhost:4310`，测试入口 `http://127.0.0.1:4311`。两套服务使用独立账号库；认证 POST 需要对应 Origin 和 JSON，注册/登录见[认证 HTTP](docs/apis/auth.md)。检查就绪：
 
 ```sh
 curl http://127.0.0.1:4310/readyz
-curl -H "Authorization: Bearer $MIO_API_TOKEN" http://127.0.0.1:4310/api/v1/capabilities
+curl http://127.0.0.1:4311/readyz
 ```
 
-准备命令创建本项目专用的 `.runtime/dsh/profiles/mio` 并链接当前插件用于本地开发；保留已有 Profile 配置。修改源码后重新构建并重启。`pnpm test:smoke` 则用打包产物、独立临时配置与官方 DSH 启动路径验证，结束后清理自己的进程与临时目录。
+启动命令自动准备所选 `DSH_HOME` 的 Profile 并链接当前插件，保留已有配置。底层 `profile:prepare` 仍支持显式目录，未设置 DSH_HOME 时保留旧 `.runtime/dsh` 默认。修改源码后重新构建并重启。`pnpm test:smoke` 使用打包产物和独立临时配置，结束后只清理自己的资源。测试中间件启动后可使用 `pnpm check:local` 对独立回归库执行完整检查，Redis 故障夹具仍需按安装章节准备。
 
 配置：`MIO_HOST` 默认 `127.0.0.1`，`MIO_PORT` 默认 `4310`，`MIO_ALLOWED_ORIGINS` 默认 `[]`。DSH 当前不接受 `0.0.0.0` 通配绑定；远程部署使用明确的接口地址和已配置的 TLS 终止/反向代理。当前没有公网部署验收。
 

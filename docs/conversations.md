@@ -6,6 +6,8 @@
 
 认证沿[认证底座](auth.md)，元数据使用独立池和显式的 `MIO_CONVERSATIONS_DATABASE_URL`，可指向同一专用 PostgreSQL/schema，但不借用认证内部池、表或登录会话 ID。原生内容沿 [DSH 契约](integrations/dsh.md)保存在独立 `DSH_HOME`。两处数据须成对保留和恢复。
 
+[常驻开发/测试入口](local-environments.md)将 DSH home 分别放在 `.runtime/dev/dsh` 和 `.runtime/test/dsh`，原生会话目录不共用；对话域仍需在所选环境文件显式配置，并执行对应 `migrate:dev conversations --apply` 或 `migrate:test conversations --apply`，不会因部署数据库自动启用。
+
 | 配置                              | 行为                                                                                             |
 | --------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `MIO_CONVERSATIONS_DATABASE_URL`  | 显式 PostgreSQL URL；未设置时保留无对话数据库的 foundation 路径；设置时必须有完整认证与 DSH 内核 |
@@ -19,10 +21,10 @@ BYOK 创建使用本人动态目录的稳定 modelRef 或显式 chat 用途默�
 真实文本验证使用独立进程与本人 Key，执行前核对实际测试范围和费用授权；普通检查不自动收费，文本授权不扩大媒体范围。token 观察不等于费用结算；全零/缺失 SDK usage 保持 unknown，失败时的非零 usage 只是 partial。取消不保证上游立即停止、退款或费用回滚。服务未提供生产容量或计费总预算保证。
 
 ```sh
-pnpm conversations:migrate
-pnpm conversations:migrate --apply
+pnpm migrate:dev conversations
+pnpm migrate:dev conversations --apply
 pnpm build
-pnpm start
+pnpm start:dev
 ```
 
 第一条只展示 SQL，第二条才建表/索引；普通启动只读检查列，不自动建表。先停止旧实例、审阅计划并按目标库责任备份，再显式迁移；本期迁移没有破坏性改名/删除或自动回滚。共享数据库约束沿 [PostgreSQL](integrations/postgres.md)。

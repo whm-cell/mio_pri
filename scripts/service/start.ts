@@ -5,6 +5,8 @@ import { launcher, localHome } from './profile.ts';
 
 await access(join(localHome(), 'profiles/mio/package.json'));
 const child = spawn(process.execPath, [launcher(), '--profile', 'mio'], {
+  // DSH also reads cwd/.env: keep the selected runtime away from the repository's dev file.
+  cwd: localHome(),
   stdio: 'inherit',
   env: { ...process.env, DSH_HOME: localHome(), DSH_TELEMETRY_DISABLED: '1' },
 });

@@ -10,6 +10,8 @@
 
 配置只从服务端环境注入，不写入仓库、Profile 或前端构建。
 
+常驻开发与人工测试通过[本地环境入口](local-environments.md)分别读取私有 `.env` / `.env.test`，选择各自数据库、Redis 和稳定 secret。`pnpm migrate:dev --apply` / `pnpm migrate:test --apply` 执行对应认证迁移；`pnpm start:dev` / `pnpm start:test` 启动独立 Profile。原始迁移命令仍读取进程环境，不隐式加载文件。
+
 | 变量                          | 要求                                                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------ |
 | `MIO_AUTH_BASE_URL`           | 固定对外 origin，如 `https://mio.example.com`，不含路径或末尾 `/`；HTTPS，回环主机可用 HTTP 开发 |
@@ -21,10 +23,10 @@
 三个必要配置均未提供时保持原无 DB 的 foundation Profile；提供任一却不完整会拒绝装载，不能静默降级。此兼容边界用于既有基础插件和开发环境；启用认证须配置完整并先迁移。
 
 ```sh
-pnpm auth:migrate
-pnpm auth:migrate --apply
+pnpm migrate:dev
+pnpm migrate:dev --apply
 pnpm build
-pnpm start
+pnpm start:dev
 ```
 
 第一条只输出迁移计划，第二条才执行。发现库无法自动修复的结构问题（例如额外必填列）时，两种模式均报错，须先审阅并修复目标结构。迁移和运行时复用 `src/auth/config.ts`，普通插件启动只检查结构和连接，不自动建表。目标库需单独备份；升级时的删除、改名、回填应单独审阅，不能假定自动回滚。通用 guard 不连接或修改业务库。

@@ -11,6 +11,8 @@
 
 DSH Agent/Session/原生持久化的采用与约束见 [DSH 内核](dsh.md)，实际入口是[受控内核](../../src/dsh/kernel.ts)和[正式 Profile](../../cordis.patch.yml)。
 
+计算服务的消息拓扑、A/B 权限、环境归属与持久化见 [RabbitMQ 契约](rabbitmq.md)，实际入口是 [A 集成](../../src/integrations/rabbitmq.ts)、[Worker 集成](../../compute/src/adapters/rabbitmq.ts)，本机运维见[常驻环境](../local-environments.md)。
+
 Redis 的需求与采用决定见[接入 PRD](../tasks/auth-rate-limit-redis/prd.md)，结果接受仍沿所属成果入口核对。FFmpeg 和后续供应商协议随实际接入扩展，不预建空页面或目录。
 
 ## 内容与职责

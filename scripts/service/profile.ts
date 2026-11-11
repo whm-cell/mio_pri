@@ -47,4 +47,4 @@ export async function prepareProfile(home: string, plugin: string): Promise<void
   }
 }
 
-export const localHome = (): string => resolve('.runtime/dsh');
+export const localHome = (): string => resolve(process.env.DSH_HOME ?? '.runtime/dsh');

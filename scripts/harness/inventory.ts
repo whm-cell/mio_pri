@@ -31,7 +31,7 @@ export async function inventory(root: string, config: HarnessConfig) {
       const path = relative ? `${relative}/${entry.name}` : entry.name;
       if (excluded.some((base) => beneath(path, base))) continue;
       if (entry.name === '.DS_Store' || entry.name.endsWith('.tgz')) continue;
-      if (/^\.env(?:\.|$)/.test(entry.name)) continue;
+      if (/^\.env(?:\.|$)/.test(entry.name) && path !== '.env.example') continue;
       if (entry.isSymbolicLink()) errors.push(`INVENTORY_SYMLINK ${path}: classify a real file`);
       else if (entry.isDirectory()) await visit(path);
       else if (entry.isFile()) files.push(path);

@@ -1679,11 +1679,36 @@ it('keeps sibling tasks independent and archives in place without deleting their
   expect((await readdir(join(root, '.work/tasks/probe/evidence'))).sort()).toEqual(originals);
 });
 
+it('captures the public environment template while leaving private environment files outside candidate inputs', async () => {
+  const root = await fixture();
+  await writeFile(join(root, '.env.example'), 'MIO_ENVIRONMENT=dev\n');
+  await writeFile(join(root, '.env.test'), 'SECRET=private\n');
+  await ready(root);
+  await edit(root, (task) => {
+    task.plan.inputs.push('.env.example');
+  });
+  expect(invoke(root, ['sync', 'probe', 'Include the public environment template.']).status).toBe(
+    0,
+  );
+  const task = await state(root);
+  expect(task.checkpoint!.files['.env.example']).toBeDefined();
+  expect(task.checkpoint!.files['.env.test']).toBeUndefined();
+  await writeFile(join(root, '.env.example'), 'MIO_ENVIRONMENT=test\n');
+  expect(invoke(root, ['check', 'probe']).output).toContain('WORK_CONTEXT_CHANGED');
+});
+
 it('rejects private/traversal/symlink inputs, missing sources, and foreign workspace ownership', async () => {
   const root = await fixture();
   await ready(root);
   const original = await state(root);
-  for (const path of ['../outside', '/tmp/foreign', '.work', '.env', 'docs/missing.md']) {
+  for (const path of [
+    '../outside',
+    '/tmp/foreign',
+    '.work',
+    '.env',
+    '.env.test',
+    'docs/missing.md',
+  ]) {
     await edit(root, (task) => {
       task.plan.inputs = [...original.plan.inputs, path];
     });

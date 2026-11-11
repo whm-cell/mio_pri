@@ -1,5 +1,7 @@
 # 计算服务 RabbitMQ 部署
 
+开发和人工测试的常驻实例使用[环境入口](../../docs/local-environments.md)统一管理，公共权限和持久化边界见 [RabbitMQ 契约](../../docs/integrations/rabbitmq.md)。下列独立 Compose 和一次性 bootstrap 仍用于独占部署及隔离探针，不替代开发/测试环境，也不自动接管其数据。
+
 该 Compose 配置用于独占的计算服务 broker，固定 RabbitMQ 4.4.0 management 镜像和摘要。启动前在受保护的位置准备仅当前用户可读的环境文件，提供 `RABBITMQ_DEFAULT_USER`、`RABBITMQ_DEFAULT_PASS`、`RABBITMQ_DEFAULT_VHOST`、`RABBITMQ_AMQP_PORT`、`RABBITMQ_MANAGEMENT_PORT`；不要将真实密码放入仓库或命令参数。Docker 管理员仍可读取容器环境，部署时应按宿主权限保护。首次启动会创建用户和 vhost；修改环境文件不会自动修改已有数据卷中的账号。
 
 下面的 `RABBITMQ_ENV_FILE` 是环境文件路径，Compose 项目名应由部署者为该实例独占。测试时先选择两个空闲的随机本机端口并记录在私有环境文件中；配置只监听 127.0.0.1，重启时沿用这两个端口，端口占用时启动会失败。跨机器的 B 需要另行配置受限内网及 TLS，不能把本地测试映射当作部署方案。
